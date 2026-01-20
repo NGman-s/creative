@@ -1,0 +1,128 @@
+import os
+import base64
+import json
+import mimetypes
+from openai import OpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Configuration for Qwen-VL-Max (assuming OpenAI-compatible endpoint like DashScope)
+# For DashScope:
+# API_KEY: Your DashScope API Key
+# BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+# MODEL: "qwen-vl-max"
+
+client = OpenAI(
+    api_key=os.getenv("DASHSCOPE_API_KEY"),
+    base_url=os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+)
+
+def encode_image(image_path):
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
+
+async def analyze_food_image(image_path, user_context_str):
+    try:
+        base64_image = encode_image(image_path)
+        user_context = json.loads(user_context_str)
+
+        # Detect MIME type
+        mime_type, _ = mimetypes.guess_type(image_path)
+        if not mime_type:
+            # Fallback for common image types if mimetypes fails (e.g. .webp on some systems)
+            ext = os.path.splitext(image_path)[1].lower()
+            mime_map = {
+                '.webp': 'image/webp',
+                '.png': 'image/png',
+                '.jpg': 'image/jpeg',
+                '.jpeg': 'image/jpeg',
+                '.gif': 'image/gif',
+                '.bmp': 'image/bmp',
+                '.avif': 'image/avif'
+            }
+            mime_type = mime_map.get(ext, "image/jpeg")  # Default fallback
+
+        print(f"Analyzing image: {image_path}, Detected MIME: {mime_type}")
+
+        # Construct the prompt with Chain of Thought instructions
+        prompt = f"""
+        Role: Professional Nutritionist and AI Vision Expert.
+        Task: Analyze the provided food image and provide nutritional information based on the user's profile.
+
+        IMPORTANT: All text content in the output (values for name, summary, suggestion, thought_process, tags, etc.) MUST be in Simplified Chinese (简体中文). Keep the JSON keys in English.
+
+        User Profile:
+        - Age: {user_context.get('age')}
+        - Goal: {user_context.get('goal')}
+        - Health Conditions: {', '.join(user_context.get('health_conditions', []))}
+
+        Instructions:
+        1. First, identify all food items in the image and estimate their portions accurately.
+        2. Reason about the nutritional content (macros/micros) based on ingredients.
+        3. MANDATORY SAFETY CHECK: Cross-reference the identified ingredients with the user's health conditions.
+           - If user has "Diabetes": Be extremely sensitive to added sugars, white flour, and high-GI fruits.
+           - If user has "Hypertension": Be extremely sensitive to high sodium, processed meats, and salty sauces.
+           - If user has "High Cholesterol": Flag high saturated fats and trans fats.
+           - If user has allergies: Flag any potential traces or direct presence of the allergen.
+        4. Traffic Light Logic:
+           - RED: Direct conflict with health conditions or goal (e.g., sugary drink for Diabetic).
+           - YELLOW: Borderline or requires strict portion control.
+           - GREEN: Highly recommended and safe.
+
+        Output Format (STRICT JSON):
+        {{
+            "thought_process": "Brief step-by-step reasoning in Chinese",
+            "items": [
+                {{
+                    "name": "Dish Name (Chinese)",
+                    "calories": 0,
+                    "unit": "kcal",
+                    "nutrition_tags": ["Tag1", "Tag2"],
+                    "traffic_light": "green/yellow/red"
+                }}
+            ],
+            "total_analysis": {{
+                "summary": "Short summary of the meal in Chinese",
+                "suggestion": "Practical advice for the user in Chinese",
+                "confidence": 0.95
+            }}
+        }}
+        """
+
+        response = client.chat.completions.create(
+            model="qwen3-vl-flash",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime_type};base64,{base64_image}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            response_format={"type": "json_object"}
+        )
+
+        content = response.choices[0].message.content
+        return json.loads(content)
+    except Exception as e:
+        print(f"Error in analyze_food_image: {e}")
+        import traceback
+        traceback.print_exc()
+
+        # Return the specific error message to the frontend for debugging
+        return {
+            "error": str(e),
+            "items": [],
+            "total_analysis": {
+                "summary": "Analysis failed. Error: " + str(e),
+                "suggestion": "Please check the backend logs or try a different image.",
+                "confidence": 0
+            }
+        }
