@@ -1,25 +1,24 @@
 <template>
   <view class="container">
     <!-- Camera View Finder / Background Image -->
-    <view class="viewfinder" @tap="handleCapture">
+    <view class="camera-view">
       <image v-if="capturedImage" :src="capturedImage" mode="aspectFill" class="bg-image"></image>
-      <view v-else class="camera-placeholder">
-        <text class="placeholder-icon">📸</text>
-        <text class="placeholder-text">点击扫描食物</text>
+      <view v-else class="camera-placeholder" @tap="handleCapture">
+        <view class="placeholder-content">
+          <text class="placeholder-icon">📷</text>
+          <text class="placeholder-text">点击拍照识别食物</text>
+        </view>
       </view>
     </view>
 
-    <!-- Header / Logo -->
-    <view class="header">
-      <image
-        class="logo"
-        src="/static/logo.png"
-        @tap="handleLogoClick"
-      ></image>
-      <text class="app-name">LIFELENS</text>
+    <!-- Shutter Button Area -->
+    <view class="shutter-area" v-if="!showOverlay">
+      <view class="shutter-btn-outer" @tap="handleCapture">
+        <view class="shutter-btn-inner"></view>
+      </view>
     </view>
 
-    <!-- HUD Overlay -->
+    <!-- Result Overlay (Bottom Sheet) -->
     <ResultOverlay
       :visible="showOverlay"
       :loading="loading"
@@ -27,23 +26,14 @@
       @close="closeOverlay"
     />
 
-    <!-- Bottom Controls -->
-    <view class="controls" v-if="!showOverlay">
-      <view class="btn side-btn" @tap="navigateTo('/pages/history/history')">
-        <text class="icon">📜</text>
-      </view>
-      <view class="btn capture-btn" @tap="handleCapture">
-        <view class="btn-inner"></view>
-      </view>
-      <view class="btn gallery-btn" @tap="handleGallery">
-        <text class="icon">🖼️</text>
-      </view>
-      <view class="btn side-btn" @tap="navigateTo('/pages/profile/profile')">
-        <text class="icon">👤</text>
-      </view>
-    </view>
+    <!-- Bottom Navigation -->
+    <BottomNav current="home" />
 
-    <view class="mock-badge" v-if="mockMode">模拟模式已激活</view>
+    <!-- Mock Mode Indicator (Subtle) -->
+    <view class="mock-indicator" v-if="mockMode" @tap="handleLogoClick">M</view>
+
+    <!-- Hidden Logo Trigger for Mock Mode -->
+    <view class="logo-trigger" @tap="handleLogoClick"></view>
   </view>
 </template>
 
@@ -54,6 +44,7 @@ import { chooseImage, compressImage } from '@/utils/image';
 import { checkCameraPermission, checkGalleryPermission } from '@/utils/permission';
 import Api from '@/utils/request';
 import ResultOverlay from '@/components/ResultOverlay.vue';
+import BottomNav from '@/components/BottomNav.vue';
 
 const userStore = useUserStore();
 
@@ -67,30 +58,27 @@ const clickCount = ref(0);
 // Dynamic Mock Data for Demo
 const getMockResult = (goal) => {
   const baseResult = {
-    thought_process: "正在识别食物... 检测到烤鸡胸肉和新鲜混合蔬菜。正在对照用户健康档案和历史数据。",
+    thought_process: "识别出这是一份烤鸡胸肉沙拉，包含生菜、圣女果和玉米粒。",
     items: [
       {
         name: "烤鸡胸肉沙拉",
         calories: 350,
-        unit: "千卡",
-        nutrition_tags: ["高蛋白", "低碳水"],
+        unit: "kcal",
+        nutrition_tags: ["高蛋白", "低脂"],
         traffic_light: "green"
       }
     ],
     total_analysis: {
-      summary: "富含优质蛋白和纤维的均衡膳食。",
-      suggestion: "非常适合您当前的健康状况。",
+      summary: "一份非常健康的减脂餐，蛋白质含量丰富。",
+      suggestion: "建议搭配一份全麦面包增加优质碳水。",
       confidence: 0.99
     }
   };
 
-  // Adjust mock based on goal for demonstration impact
   if (goal === 'diabetes') {
-    baseResult.thought_process += " 警告：用户有糖尿病史。正在扫描高升糖成分... 未检测到淀粉。";
-    baseResult.total_analysis.suggestion = "血糖管理安全。避免使用蜂蜜芥末酱。";
+    baseResult.total_analysis.suggestion = "蔬菜丰富，升糖指数低，适合您的饮食计划。";
   } else if (goal === 'weight_loss') {
-    baseResult.thought_process += " 优化：正在计算纤维热量比。检测到高密度。";
-    baseResult.total_analysis.suggestion = "非常适合热量亏缺。饱腹感指数：高。";
+    baseResult.total_analysis.suggestion = "热量控制得当，饱腹感强，非常适合减脂期食用。";
   }
 
   return baseResult;
@@ -108,37 +96,13 @@ const handleLogoClick = () => {
   }
 };
 
-const navigateTo = (url) => {
-  uni.navigateTo({ url });
-};
-
 const handleCapture = async () => {
   try {
-    await checkCameraPermission();
-    const path = await chooseImage(['camera']);
+    // In H5 dev mode, chooseImage works for both camera and album usually
+    const path = await chooseImage(['camera', 'album']);
     processImage(path);
   } catch (e) {
     console.error('Capture failed', e);
-    uni.showModal({
-      title: '需要权限',
-      content: '扫描食物需要相机权限，请在设置中开启。',
-      showCancel: false
-    });
-  }
-};
-
-const handleGallery = async () => {
-  try {
-    await checkGalleryPermission();
-    const path = await chooseImage(['album']);
-    processImage(path);
-  } catch (e) {
-    console.error('Gallery selection failed', e);
-    uni.showModal({
-      title: '需要权限',
-      content: '选择食物图片需要存储权限，请在设置中开启。',
-      showCancel: false
-    });
   }
 };
 
@@ -151,24 +115,11 @@ const processImage = async (path) => {
     const compressedPath = await compressImage(path);
 
     if (mockMode.value) {
-      // Artificial delay for mock mode
       setTimeout(() => {
         finishAnalysis(getMockResult(userStore.profile.goal));
       }, 1500);
       return;
     }
-
-    // Set a 60s timeout
-    const timeoutId = setTimeout(() => {
-      if (loading.value) {
-        console.warn('API Timeout');
-        loading.value = false;
-        uni.showToast({
-          title: '请求超时，请重试',
-          icon: 'none'
-        });
-      }
-    }, 60000);
 
     const res = await Api.uploadFile({
       url: '/api/v1/vision/analyze',
@@ -179,8 +130,6 @@ const processImage = async (path) => {
       }
     });
 
-    clearTimeout(timeoutId);
-
     if (res.code === 200) {
       finishAnalysis(res.data);
     } else {
@@ -190,9 +139,8 @@ const processImage = async (path) => {
     console.error('Analysis error', e);
     loading.value = false;
     uni.showToast({
-      title: e.message || '识别失败，请检查网络或重试',
-      icon: 'none',
-      duration: 3000
+      title: '识别失败，请重试',
+      icon: 'none'
     });
   }
 };
@@ -200,7 +148,6 @@ const processImage = async (path) => {
 const finishAnalysis = (result) => {
   analysisResult.value = result;
   loading.value = false;
-  // Save to history
   userStore.addHistoryEntry({
     image: capturedImage.value,
     result: result
@@ -211,26 +158,30 @@ const closeOverlay = () => {
   showOverlay.value = false;
   analysisResult.value = null;
   loading.value = false;
+  capturedImage.value = null; // Reset camera view
 };
 
-// Start camera on mount if needed (simulated by immediate prompt or UI design)
 onMounted(() => {
-  console.log('LifeLens Initialized');
+  console.log('LifeLens Camera Ready');
 });
 </script>
 
-<style scoped>
+<style lang="scss" scoped>
 .container {
   position: relative;
   width: 100vw;
   height: 100vh;
-  background-color: #000;
+  background-color: #000; /* Camera bg is typically black */
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
-.viewfinder {
+.camera-view {
+  flex: 1;
   width: 100%;
-  height: 100%;
+  position: relative;
+  background-color: #000;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -242,96 +193,89 @@ onMounted(() => {
 }
 
 .camera-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: #1c1c1e;
+}
+
+.placeholder-content {
   display: flex;
   flex-direction: column;
   align-items: center;
-  color: #00f3ff;
+  opacity: 0.5;
 }
 
 .placeholder-icon {
-  font-size: 80px;
-  margin-bottom: 20px;
-  text-shadow: 0 0 20px #00f3ff;
+  font-size: 48px;
+  margin-bottom: 16px;
+  filter: grayscale(1);
 }
 
 .placeholder-text {
-  font-family: 'Courier New', Courier, monospace;
-  letter-spacing: 4px;
-  font-weight: bold;
+  color: #fff;
+  font-size: 14px;
+  letter-spacing: 0.5px;
 }
 
-.header {
+/* Shutter Button Area - positioned above bottom nav */
+.shutter-area {
   position: absolute;
-  top: calc(40px + env(safe-area-inset-top));
-  left: 20px;
-  display: flex;
-  align-items: center;
-  z-index: 10;
-}
-
-.logo {
-  width: 40px;
-  height: 40px;
-  margin-right: 10px;
-  border: 1px solid #00f3ff;
-  border-radius: 50%;
-  padding: 2px;
-}
-
-.app-name {
-  color: #00f3ff;
-  font-size: 20px;
-  font-weight: bold;
-  letter-spacing: 2px;
-  text-shadow: 0 0 10px #00f3ff;
-}
-
-.controls {
-  position: absolute;
-  bottom: calc(50px + env(safe-area-inset-bottom));
+  bottom: calc(80px + env(safe-area-inset-bottom));
+  left: 0;
   width: 100%;
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 40px;
+  z-index: 10;
+  pointer-events: none; /* Allow clicks to pass through around the button */
 }
 
-.btn {
+.shutter-btn-outer {
+  pointer-events: auto;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  border: 4px solid rgba(255, 255, 255, 0.3);
   display: flex;
   justify-content: center;
   align-items: center;
-  background: rgba(0, 0, 0, 0.5);
-  border: 2px solid #00f3ff;
+  background-color: transparent;
+  transition: all 0.2s ease;
+
+  &:active {
+    transform: scale(0.95);
+    background-color: rgba(255, 255, 255, 0.1);
+  }
+}
+
+.shutter-btn-inner {
+  width: 56px;
+  height: 56px;
+  background-color: #fff;
   border-radius: 50%;
-  box-shadow: 0 0 15px rgba(0, 243, 255, 0.5);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
-.capture-btn {
-  width: 80px;
-  height: 80px;
-}
-
-.btn-inner {
-  width: 60px;
-  height: 60px;
-  background: #00f3ff;
-  border-radius: 50%;
-}
-
-.gallery-btn, .side-btn {
-  width: 50px;
-  height: 50px;
-}
-
-.mock-badge {
+/* Hidden Logo Trigger */
+.logo-trigger {
   position: absolute;
-  top: 100px;
-  left: 20px;
-  background: red;
-  color: white;
+  top: 0;
+  left: 0;
+  width: 100px;
+  height: 100px;
+  z-index: 100;
+}
+
+.mock-indicator {
+  position: absolute;
+  top: calc(44px + env(safe-area-inset-top));
+  right: 20px;
   font-size: 10px;
-  padding: 2px 5px;
+  color: rgba(255, 255, 255, 0.3);
   font-weight: bold;
-  z-index: 10;
+  z-index: 20;
 }
 </style>

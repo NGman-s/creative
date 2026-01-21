@@ -12,24 +12,26 @@
 		{
 			"path": "pages/profile/profile",
 			"style": {
-				"navigationBarTitleText": "健康档案",
-				"navigationBarBackgroundColor": "#00141e",
-				"navigationBarTextStyle": "white"
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "我的档案",
+				"navigationBarBackgroundColor": "#F5F5F7",
+				"navigationBarTextStyle": "black"
 			}
 		},
 		{
 			"path": "pages/history/history",
 			"style": {
+				"navigationStyle": "custom",
 				"navigationBarTitleText": "饮食记录",
-				"navigationBarBackgroundColor": "#00141e",
-				"navigationBarTextStyle": "white"
+				"navigationBarBackgroundColor": "#F5F5F7",
+				"navigationBarTextStyle": "black"
 			}
 		}
 	],
 	"globalStyle": {
-		"navigationBarTextStyle": "white",
+		"navigationBarTextStyle": "black",
 		"navigationBarTitleText": "LifeLens",
-		"navigationBarBackgroundColor": "#00141e",
-		"backgroundColor": "#000000"
+		"navigationBarBackgroundColor": "#F5F5F7",
+		"backgroundColor": "#F5F5F7"
 	}
 }

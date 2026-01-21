@@ -1,4 +1,4 @@
-const BASE_URL = 'http://localhost:8000'; // Changed to localhost for local H5 development
+const BASE_URL = 'http://192.168.0.102:8000'; // Changed to LAN IP for mobile access
 
 const request = (options) => {
   return new Promise((resolve, reject) => {

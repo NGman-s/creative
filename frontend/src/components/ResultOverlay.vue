@@ -1,81 +1,84 @@
 <template>
-  <view class="hud-container" v-if="visible">
-    <!-- Scanning Line Effect -->
-    <view class="scanner-line" v-if="loading"></view>
+  <view class="overlay-container" :class="{ visible: visible }">
+    <!-- Backdrop -->
+    <view class="backdrop" @tap="$emit('close')" v-if="visible"></view>
 
-    <!-- HUD Overlay Content -->
-    <view class="hud-content" v-if="!loading && result">
-      <!-- HUD Border Decor -->
-      <view class="hud-corner top-left"></view>
-      <view class="hud-corner top-right"></view>
-      <view class="hud-corner bottom-left"></view>
-      <view class="hud-corner bottom-right"></view>
-
-      <!-- Decorative HUD Elements -->
-      <view class="hud-decor-line"></view>
-      <view class="hud-status-bar">
-        <text class="status-item">纬度: 39.9042</text>
-        <text class="status-item">经度: 116.4074</text>
-        <text class="status-item">系统: 在线</text>
+    <!-- Bottom Sheet -->
+    <view class="bottom-sheet" :class="{ 'slide-up': visible }">
+      <!-- Drag Handle -->
+      <view class="sheet-handle-bar">
+        <view class="sheet-handle"></view>
       </view>
 
-      <view class="result-header">
-        <text class="title">AI 视觉分析 v3.0</text>
-        <view class="traffic-light" :class="result.items[0]?.traffic_light"></view>
+      <!-- Loading State -->
+      <view class="loading-state" v-if="loading">
+        <view class="loading-spinner"></view>
+        <text class="loading-text">正在分析...</text>
+        <text class="loading-sub">LifeLens AI 正在识别食物成分</text>
       </view>
 
-      <!-- Thought Process (New) -->
-      <view class="thought-process" v-if="result.thought_process">
-        <text class="thought-label">分析逻辑 > </text>
-        <text class="thought-text">{{ result.thought_process }}</text>
-      </view>
-
-      <view class="dish-info" v-for="(item, index) in result.items" :key="index">
-        <view class="dish-name">{{ item.name }}</view>
-        <view class="nutrition-grid">
-          <view class="grid-item">
-            <text class="label">热量</text>
-            <text class="value">{{ item.calories }} {{ item.unit }}</text>
+      <!-- Result Content -->
+      <scroll-view scroll-y class="sheet-content" v-if="!loading && result">
+        <!-- Header Section -->
+        <view class="result-header">
+          <view class="title-row">
+            <text class="dish-name">{{ result.items[0]?.name || '识别结果' }}</text>
+            <view class="traffic-badge" :class="result.items[0]?.traffic_light">
+              {{ getTrafficLightLabel(result.items[0]?.traffic_light) }}
+            </view>
           </view>
-          <view class="grid-item">
-            <text class="label">标签</text>
-            <view class="tags">
-              <text v-for="tag in item.nutrition_tags" :key="tag" class="tag-chip">{{ tag }}</text>
+
+          <view class="nutrition-row">
+            <view class="nutrition-item">
+              <text class="nutri-value">{{ result.items[0]?.calories || 0 }}</text>
+              <text class="nutri-unit">kcal</text>
+              <text class="nutri-label">热量</text>
+            </view>
+            <view class="nutrition-divider"></view>
+            <view class="nutrition-tags">
+              <text
+                v-for="tag in result.items[0]?.nutrition_tags"
+                :key="tag"
+                class="tag-chip"
+              >{{ tag }}</text>
             </view>
           </view>
         </view>
-      </view>
 
-      <view class="analysis-summary">
-        <view class="summary-label">总结</view>
-        <view class="summary-text">{{ result.total_analysis.summary }}</view>
-        <view class="suggestion-label">建议</view>
-        <view class="suggestion-text">{{ result.total_analysis.suggestion }}</view>
-      </view>
-
-      <view class="close-btn" @tap="$emit('close')">关闭</view>
-    </view>
-
-    <view class="loading-status" v-if="loading">
-      <text class="loading-text">正在扫描中...</text>
-      <view class="progress-bar-container">
-        <view class="progress-bar-fill"></view>
-      </view>
-
-      <!-- Dynamic Scanning Logs -->
-      <view class="log-container">
-        <view v-for="(log, index) in currentLogs" :key="index" class="log-item">
-          <text class="log-prefix">></text> {{ log }}
+        <!-- AI Analysis Section -->
+        <view class="section-container">
+          <view class="section-title">AI 分析</view>
+          <view class="analysis-card">
+            <view class="analysis-text summary">
+              {{ result.total_analysis.summary }}
+            </view>
+            <view class="analysis-divider"></view>
+            <view class="suggestion-row">
+              <text class="suggestion-icon">💡</text>
+              <text class="analysis-text suggestion">
+                {{ result.total_analysis.suggestion }}
+              </text>
+            </view>
+          </view>
         </view>
-      </view>
 
-      <text class="loading-sub">正在分析分子结构</text>
+        <!-- Thought Process (Expandable/Optional) -->
+        <view class="section-container" v-if="result.thought_process">
+          <view class="section-title small">识别逻辑</view>
+          <view class="thought-text">{{ result.thought_process }}</view>
+        </view>
+
+        <!-- Action Button -->
+        <view class="action-area">
+          <button class="btn-primary full-width" @tap="$emit('close')">完成</button>
+        </view>
+      </scroll-view>
     </view>
   </view>
 </template>
 
 <script setup>
-import { ref, watch, onUnmounted, defineProps, defineEmits } from 'vue';
+import { defineProps, defineEmits } from 'vue';
 
 const props = defineProps({
   visible: Boolean,
@@ -85,326 +88,282 @@ const props = defineProps({
 
 const emit = defineEmits(['close']);
 
-const allLogs = [
-  '正在初始化光学传感器...',
-  '正在捕获图像数据...',
-  '正在提取像素特征...',
-  '正在映射几何向量...',
-  '正在查询营养数据库...',
-  '正在运行多模态推理...',
-  '正在估算热量密度...',
-  '正在交叉对比用户档案...',
-  '正在生成健康报告...'
-];
-
-const currentLogs = ref([]);
-let logInterval = null;
-
-watch(() => props.loading, (newVal) => {
-  if (newVal) {
-    currentLogs.value = [allLogs[0]];
-    let index = 1;
-    logInterval = setInterval(() => {
-      if (index < allLogs.length) {
-        currentLogs.value.push(allLogs[index]);
-        if (currentLogs.value.length > 4) {
-          currentLogs.value.shift();
-        }
-        index++;
-      } else {
-        clearInterval(logInterval);
-      }
-    }, 600);
-  } else {
-    clearInterval(logInterval);
-    currentLogs.value = [];
-  }
-});
-
-onUnmounted(() => {
-  clearInterval(logInterval);
-});
+const getTrafficLightLabel = (color) => {
+  const map = {
+    'green': '推荐',
+    'yellow': '适量',
+    'red': '少吃'
+  };
+  return map[color] || '未知';
+};
 </script>
 
-<style scoped>
-.hud-container {
+<style lang="scss" scoped>
+.overlay-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1000;
+  pointer-events: none;
+  visibility: hidden;
+  transition: visibility 0.3s;
+
+  &.visible {
+    pointer-events: auto;
+    visibility: visible;
+  }
+}
+
+.backdrop {
   position: absolute;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
-  z-index: 100;
-  pointer-events: auto;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(2px);
+  opacity: 0;
+  animation: fadeIn 0.3s forwards;
+}
+
+@keyframes fadeIn {
+  to { opacity: 1; }
+}
+
+.bottom-sheet {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  background: #FFFFFF;
+  border-radius: 20px 20px 0 0;
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.1);
+  transform: translateY(100%);
+  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
   display: flex;
   flex-direction: column;
+  max-height: 85vh;
+  padding-bottom: env(safe-area-inset-bottom);
+
+  &.slide-up {
+    transform: translateY(0);
+  }
+}
+
+.sheet-handle-bar {
+  width: 100%;
+  height: 24px;
+  display: flex;
   justify-content: center;
   align-items: center;
-  background-color: rgba(0, 0, 0, 0.2);
+  flex-shrink: 0;
 }
 
-/* Scanner Line */
-.scanner-line {
-  position: absolute;
-  width: 100%;
-  height: 4px;
-  background: linear-gradient(to bottom, transparent, #00f3ff, transparent);
-  box-shadow: 0 0 15px #00f3ff;
-  top: 0;
-  animation: scan 2s linear infinite;
-  z-index: 101;
+.sheet-handle {
+  width: 36px;
+  height: 5px;
+  background: #E5E5EA;
+  border-radius: 3px;
 }
 
-@keyframes scan {
-  0% { top: 0; }
-  100% { top: 100%; }
-}
-
-/* HUD Content */
-.hud-content {
-  position: relative;
-  width: 85%;
-  background: rgba(0, 20, 30, 0.85);
-  border: 1px solid #00f3ff;
-  padding: 20px;
-  color: #00f3ff;
-  font-family: 'Courier New', Courier, monospace;
-  box-shadow: 0 0 20px rgba(0, 243, 255, 0.3);
-  backdrop-filter: blur(5px);
-}
-
-/* Flicker Animation for HUD Text */
-.title, .dish-name, .loading-text {
-  animation: flicker 3s infinite;
-}
-
-@keyframes flicker {
-  0% { opacity: 1; }
-  3% { opacity: 0.8; }
-  6% { opacity: 1; }
-  7% { opacity: 0.9; }
-  8% { opacity: 1; }
-  9% { opacity: 0.6; }
-  10% { opacity: 1; }
-  89% { opacity: 1; }
-  90% { opacity: 0.8; }
-  100% { opacity: 1; }
-}
-
-.hud-corner {
-  position: absolute;
-  width: 20px;
-  height: 20px;
-  border: 2px solid #00f3ff;
-  filter: drop-shadow(0 0 5px #00f3ff);
-}
-
-.top-left { top: -2px; left: -2px; border-right: none; border-bottom: none; }
-.top-right { top: -2px; right: -2px; border-left: none; border-bottom: none; }
-.bottom-left { bottom: -2px; left: -2px; border-right: none; border-top: none; }
-.bottom-right { bottom: -2px; right: -2px; border-left: none; border-top: none; }
-
-.hud-decor-line {
-  position: absolute;
-  top: 10px;
-  right: 50px;
-  width: 100px;
-  height: 1px;
-  background: linear-gradient(to right, transparent, #00f3ff);
-}
-
-.hud-status-bar {
+/* Loading State */
+.loading-state {
   display: flex;
-  gap: 15px;
-  font-size: 8px;
-  margin-bottom: 10px;
-  opacity: 0.6;
-}
-
-.status-item {
-  position: relative;
-}
-
-.thought-process {
-  font-size: 10px;
-  background: rgba(0, 243, 255, 0.05);
-  padding: 8px;
-  margin-bottom: 15px;
-  border: 1px dashed rgba(0, 243, 255, 0.2);
-  line-height: 1.2;
-}
-
-.thought-label {
-  font-weight: bold;
-  color: #fff;
-}
-
-.thought-text {
-  font-style: italic;
-}
-
-.result-header {
-  display: flex;
-  justify-content: space-between;
+  flex-direction: column;
   align-items: center;
-  margin-bottom: 15px;
-  border-bottom: 1px solid rgba(0, 243, 255, 0.5);
-  padding-bottom: 5px;
+  justify-content: center;
+  padding: 40px 20px;
 }
 
-.title {
-  font-weight: bold;
-  letter-spacing: 2px;
-  font-size: 14px;
-}
-
-.traffic-light {
-  width: 15px;
-  height: 15px;
+.loading-spinner {
+  width: 30px;
+  height: 30px;
+  border: 3px solid #E5E5EA;
+  border-top-color: #007AFF;
   border-radius: 50%;
-  box-shadow: 0 0 10px currentColor;
+  animation: spin 1s linear infinite;
+  margin-bottom: 16px;
 }
 
-.traffic-light.green { color: #00ff00; background-color: #00ff00; }
-.traffic-light.yellow { color: #ffff00; background-color: #ffff00; }
-.traffic-light.red { color: #ff0000; background-color: #ff0000; }
-
-.dish-name {
-  font-size: 20px;
-  font-weight: bold;
-  margin-bottom: 10px;
-  text-transform: uppercase;
-}
-
-.nutrition-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 15px;
-  margin-bottom: 15px;
-}
-
-.label {
-  font-size: 10px;
-  display: block;
-  opacity: 0.8;
-}
-
-.value {
-  font-size: 16px;
-  font-weight: bold;
-}
-
-.tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.tag-chip {
-  font-size: 10px;
-  background: rgba(0, 243, 255, 0.2);
-  border: 1px solid #00f3ff;
-  padding: 2px 5px;
-}
-
-.analysis-summary {
-  font-size: 12px;
-  background: rgba(0, 0, 0, 0.3);
-  padding: 10px;
-  border-left: 2px solid #00f3ff;
-}
-
-.summary-label, .suggestion-label {
-  font-weight: bold;
-  font-size: 10px;
-  margin-bottom: 2px;
-  color: #fff;
-}
-
-.summary-text, .suggestion-text {
-  margin-bottom: 8px;
-  line-height: 1.4;
-}
-
-.close-btn {
-  margin-top: 15px;
-  text-align: center;
-  padding: 10px;
-  border: 1px solid #00f3ff;
-  font-size: 14px;
-  font-weight: bold;
-  transition: all 0.3s;
-}
-
-.close-btn:active {
-  background: #00f3ff;
-  color: #00141e;
-}
-
-.loading-status {
-  background: rgba(0, 20, 30, 0.7);
-  padding: 20px;
-  text-align: center;
-  border: 1px solid #00f3ff;
-  color: #00f3ff;
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .loading-text {
-  display: block;
-  font-weight: bold;
-  margin-bottom: 5px;
+  font-size: 17px;
+  font-weight: 600;
+  color: #1D1D1F;
+  margin-bottom: 8px;
 }
 
 .loading-sub {
-  font-size: 10px;
-  opacity: 0.8;
+  font-size: 13px;
+  color: #86868B;
 }
 
-.progress-bar-container {
+/* Result Content */
+.sheet-content {
+  flex: 1;
   width: 100%;
-  height: 2px;
-  background: rgba(0, 243, 255, 0.2);
-  margin: 15px 0;
-  position: relative;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
-.progress-bar-fill {
-  position: absolute;
-  top: 0;
-  left: 0;
-  height: 100%;
-  background: #00f3ff;
-  box-shadow: 0 0 10px #00f3ff;
-  animation: progress 2s infinite ease-in-out;
+.result-header {
+  padding: 10px 24px 24px;
 }
 
-.log-container {
-  height: 80px;
-  width: 100%;
+.title-row {
   display: flex;
-  flex-direction: column;
-  justify-content: flex-start;
+  justify-content: space-between;
   align-items: flex-start;
-  overflow: hidden;
-  margin-bottom: 10px;
+  margin-bottom: 16px;
 }
 
-.log-item {
-  font-size: 8px;
-  color: #00f3ff;
-  opacity: 0.7;
-  margin-bottom: 4px;
-  font-family: 'Courier New', Courier, monospace;
+.dish-name {
+  font-size: 28px;
+  font-weight: 700;
+  color: #1D1D1F;
+  line-height: 1.2;
+  flex: 1;
+  margin-right: 12px;
 }
 
-.log-prefix {
-  font-weight: bold;
-  margin-right: 5px;
+.traffic-badge {
+  padding: 6px 12px;
+  border-radius: 100px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #FFF;
+  flex-shrink: 0;
+
+  &.green { background-color: #34C759; }
+  &.yellow { background-color: #FF9500; }
+  &.red { background-color: #FF3B30; }
 }
 
-@keyframes progress {
-  0% { width: 0%; left: 0%; }
-  50% { width: 100%; left: 0%; }
-  100% { width: 0%; left: 100%; }
+.nutrition-row {
+  display: flex;
+  align-items: center;
+}
+
+.nutrition-item {
+  display: flex;
+  align-items: baseline;
+}
+
+.nutri-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1D1D1F;
+  margin-right: 2px;
+}
+
+.nutri-unit {
+  font-size: 13px;
+  color: #86868B;
+  margin-right: 6px;
+}
+
+.nutri-label {
+  font-size: 13px;
+  color: #86868B;
+}
+
+.nutrition-divider {
+  width: 1px;
+  height: 20px;
+  background: #E5E5EA;
+  margin: 0 16px;
+}
+
+.nutrition-tags {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tag-chip {
+  padding: 4px 10px;
+  background: #F2F2F7;
+  color: #636366;
+  font-size: 12px;
+  border-radius: 6px;
+  font-weight: 500;
+}
+
+/* Analysis Section */
+.section-container {
+  padding: 0 24px 24px;
+}
+
+.section-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1D1D1F;
+  margin-bottom: 12px;
+
+  &.small {
+    font-size: 13px;
+    color: #86868B;
+  }
+}
+
+.analysis-card {
+  background: #F5F5F7;
+  border-radius: 16px;
+  padding: 16px;
+}
+
+.analysis-text {
+  font-size: 15px;
+  line-height: 1.5;
+  color: #1D1D1F;
+
+  &.summary {
+    font-weight: 500;
+  }
+
+  &.suggestion {
+    color: #48484A;
+  }
+}
+
+.analysis-divider {
+  height: 1px;
+  background: #E5E5EA;
+  margin: 12px 0;
+}
+
+.suggestion-row {
+  display: flex;
+  align-items: flex-start;
+}
+
+.suggestion-icon {
+  margin-right: 8px;
+  font-size: 16px;
+}
+
+.thought-text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #86868B;
+  background: #F9F9F9;
+  padding: 12px;
+  border-radius: 8px;
+}
+
+/* Action Area */
+.action-area {
+  padding: 0 24px 24px;
+}
+
+.full-width {
+  width: 100%;
+  height: 50px;
+  line-height: 50px;
+  font-size: 17px;
 }
 </style>

@@ -1,11 +1,8 @@
 <template>
   <view class="chart-container">
     <view class="chart-header">
-      <text class="chart-title">本周热量趋势 (Weekly Calories)</text>
-      <view class="chart-legend">
-        <view class="legend-dot"></view>
-        <text class="legend-text">kcal</text>
-      </view>
+      <text class="chart-title">本周热量趋势</text>
+      <text class="chart-subtitle">平均: {{ averageCalories }} kcal</text>
     </view>
 
     <view class="chart-body">
@@ -18,7 +15,6 @@
       <view class="bars-container">
         <view v-for="(item, index) in normalizedData" :key="index" class="bar-group">
           <view class="bar-wrapper">
-             <view class="bar-value" v-if="item.calories > 0">{{ item.calories }}</view>
              <view
                class="bar"
                :style="{ height: item.height + '%' }"
@@ -29,12 +25,6 @@
         </view>
       </view>
     </view>
-
-    <!-- Decorative HUD corners -->
-    <view class="corner top-left"></view>
-    <view class="corner top-right"></view>
-    <view class="corner bottom-left"></view>
-    <view class="corner bottom-right"></view>
   </view>
 </template>
 
@@ -48,10 +38,16 @@ const props = defineProps({
   }
 });
 
+const averageCalories = computed(() => {
+  if (!props.data || props.data.length === 0) return 0;
+  const sum = props.data.reduce((acc, curr) => acc + curr.calories, 0);
+  return Math.round(sum / props.data.length);
+});
+
 const normalizedData = computed(() => {
   if (!props.data || props.data.length === 0) return [];
 
-  // Find max value for scaling (min 2000 to avoid huge bars for small values)
+  // Find max value for scaling (min 2500 for visual consistency)
   const maxCalories = Math.max(2500, ...props.data.map(d => d.calories));
 
   return props.data.map(d => ({
@@ -61,53 +57,34 @@ const normalizedData = computed(() => {
 });
 </script>
 
-<style scoped>
+<style lang="scss" scoped>
 .chart-container {
-  position: relative;
-  background: rgba(0, 20, 30, 0.6);
-  border: 1px solid rgba(0, 243, 255, 0.3);
-  padding: 20px;
-  margin-bottom: 20px;
-  font-family: 'Courier New', Courier, monospace;
+  background: transparent;
+  padding: 0;
+  width: 100%;
 }
 
 .chart-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-  border-bottom: 1px solid rgba(0, 243, 255, 0.2);
-  padding-bottom: 10px;
+  margin-bottom: 24px;
 }
 
 .chart-title {
-  color: #00f3ff;
-  font-size: 14px;
-  font-weight: bold;
-  letter-spacing: 1px;
+  font-size: 18px;
+  font-weight: 600;
+  color: #1d1d1f;
+  margin-bottom: 4px;
+  display: block;
 }
 
-.chart-legend {
-  display: flex;
-  align-items: center;
-}
-
-.legend-dot {
-  width: 8px;
-  height: 8px;
-  background: #00f3ff;
-  margin-right: 5px;
-  box-shadow: 0 0 5px #00f3ff;
-}
-
-.legend-text {
-  color: rgba(0, 243, 255, 0.7);
-  font-size: 10px;
+.chart-subtitle {
+  font-size: 13px;
+  color: #86868b;
+  font-weight: 500;
 }
 
 .chart-body {
   position: relative;
-  height: 150px;
+  height: 180px;
   width: 100%;
 }
 
@@ -116,7 +93,8 @@ const normalizedData = computed(() => {
   left: 0;
   width: 100%;
   height: 1px;
-  background: rgba(0, 243, 255, 0.1);
+  background: #E5E5EA; /* Light gray separator */
+  border-bottom: 1px dashed transparent; /* Optional styling */
   z-index: 1;
 }
 
@@ -127,7 +105,7 @@ const normalizedData = computed(() => {
   height: 100%;
   position: relative;
   z-index: 2;
-  padding-top: 20px; /* Space for values */
+  padding-bottom: 20px; /* Space for labels */
 }
 
 .bar-group {
@@ -146,46 +124,26 @@ const normalizedData = computed(() => {
   justify-content: flex-end;
   align-items: center;
   width: 100%;
-  padding-bottom: 5px;
+  padding-bottom: 8px;
 }
 
 .bar {
-  width: 12px;
-  background: rgba(0, 243, 255, 0.2);
-  border: 1px solid rgba(0, 243, 255, 0.5);
-  transition: height 1s ease-out;
-  position: relative;
+  width: 8px;
+  background: #F2F2F7; /* Inactive color */
+  border-radius: 4px;
+  transition: height 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+  min-height: 4px;
 }
 
 .bar-active {
-  background: linear-gradient(to top, rgba(0, 243, 255, 0.2), rgba(0, 243, 255, 0.8));
-  box-shadow: 0 0 10px rgba(0, 243, 255, 0.3);
-}
-
-.bar-value {
-  color: #fff;
-  font-size: 8px;
-  margin-bottom: 2px;
-  transform: scale(0.8);
+  background: #007AFF; /* Apple Blue */
 }
 
 .bar-label {
-  color: rgba(0, 243, 255, 0.7);
-  font-size: 8px;
-  margin-top: 5px;
-}
-
-/* Corner decorations */
-.corner {
+  color: #86868b;
+  font-size: 11px;
+  font-weight: 500;
   position: absolute;
-  width: 10px;
-  height: 10px;
-  border: 2px solid #00f3ff;
-  opacity: 0.8;
+  bottom: 0;
 }
-
-.top-left { top: -1px; left: -1px; border-right: none; border-bottom: none; }
-.top-right { top: -1px; right: -1px; border-left: none; border-bottom: none; }
-.bottom-left { bottom: -1px; left: -1px; border-right: none; border-top: none; }
-.bottom-right { bottom: -1px; right: -1px; border-left: none; border-top: none; }
 </style>
