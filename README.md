@@ -19,7 +19,7 @@ LifeLens 是一款专为“智慧餐饮”设计的 AI 原生移动应用。它�
 ## 🛠 技术栈
 - **前端**: Uni-app (Vue3 + Vite + Pinia)
 - **后端**: Python FastAPI + Uvicorn
-- **AI**: Qwen-VL-Max (通过 DashScope API 接入)
+- **AI**: Qwen3-VL-Flash (通过 DashScope API 接入)
 
 ## 📂 项目结构
 ```
