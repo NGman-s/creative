@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    container_name: lifelens-backend
+    restart: always
+    environment:
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+    volumes:
+      - ./backend/temp_images:/app/temp_images
+    networks:
+      - lifelens-network
+
+  frontend:
+    build: ./frontend
+    container_name: lifelens-frontend
+    restart: always
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+    depends_on:
+      - backend
+    networks:
+      - lifelens-network
+
+networks:
+  lifelens-network:
+    driver: bridge

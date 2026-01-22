@@ -1,4 +1,10 @@
-const BASE_URL = 'http://192.168.0.102:8000'; // Changed to LAN IP for mobile access
+const DEV_BASE_URL = 'http://192.168.0.102:8000'; // Local dev IP
+
+// In production, use relative path (empty string) so requests go to the same domain/port
+// Nginx will intercept /api requests and forward them to the backend
+const BASE_URL = import.meta.env.MODE === 'development'
+  ? DEV_BASE_URL
+  : '';
 
 const request = (options) => {
   return new Promise((resolve, reject) => {
