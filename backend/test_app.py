@@ -84,17 +84,33 @@ class LifeLensApiTestCase(unittest.TestCase):
     def _valid_analysis_result(self):
         return {
             "main_name": "鸡胸肉沙拉",
-            "total_calories": 320,
-            "total_traffic_light": "green",
-            "warning_message": "",
+            "nutrition_totals": {
+                "calories_kcal": 320,
+                "protein_g": 32,
+                "fat_g": 9,
+                "carb_g": 12,
+                "fiber_g": 5,
+                "sugar_g": 4,
+                "sodium_mg": 360,
+            },
+            "nutrition_tags": ["高蛋白", "高纤维", "低脂"],
+            "risk_flags": [],
             "thought_process": "识别为一份鸡胸肉沙拉。",
             "items": [
                 {
                     "name": "鸡胸肉沙拉",
-                    "calories": 320,
-                    "unit": "kcal",
-                    "nutrition_tags": ["高蛋白", "低脂"],
-                    "traffic_light": "green",
+                    "ingredient_evidence": "可见鸡胸肉、生菜和少量酱汁",
+                    "nutrition": {
+                        "calories_kcal": 320,
+                        "protein_g": 32,
+                        "fat_g": 9,
+                        "carb_g": 12,
+                        "fiber_g": 5,
+                        "sugar_g": 4,
+                        "sodium_mg": 360,
+                    },
+                    "nutrition_tags": ["高蛋白", "高纤维", "低脂"],
+                    "risk_flags": [],
                 }
             ],
             "total_analysis": {
@@ -116,9 +132,61 @@ class LifeLensApiTestCase(unittest.TestCase):
             "total_calories": 420,
             "total_traffic_light": "green",
             "summary": "蛋白质充足，脂肪质量较好。",
+            "warning_message": "",
+            "nutrition_totals": {
+                "calories_kcal": 420,
+                "protein_g": 31.5,
+                "fat_g": 18.0,
+                "carb_g": 26.0,
+                "fiber_g": 9.0,
+                "sugar_g": 4.0,
+                "sodium_mg": 410,
+            },
+            "nutrition_tags": ["高蛋白", "高纤维"],
             "image_url": "/uploads/demo.jpg",
             "image_expires_at": "2026-04-11T00:00:00Z",
         }
+
+    def _analysis_result_with_flags(self, flags, *, goal="healthy_eat", health_conditions=None):
+        payload = {
+            "main_name": "测试餐",
+            "nutrition_totals": {
+                "calories_kcal": 520,
+                "protein_g": 18,
+                "fat_g": 16,
+                "carb_g": 48,
+                "fiber_g": 4,
+                "sugar_g": 12,
+                "sodium_mg": 420,
+            },
+            "risk_flags": flags,
+            "items": [
+                {
+                    "name": "测试餐",
+                    "ingredient_evidence": "根据图片判断为一份测试餐",
+                    "nutrition": {
+                        "calories_kcal": 520,
+                        "protein_g": 18,
+                        "fat_g": 16,
+                        "carb_g": 48,
+                        "fiber_g": 4,
+                        "sugar_g": 12,
+                        "sodium_mg": 420,
+                    },
+                    "risk_flags": flags,
+                }
+            ],
+            "total_analysis": {
+                "summary": "测试摘要",
+                "suggestion": "测试建议",
+                "confidence": 0.82,
+            },
+        }
+        user_context = {
+            "goal": goal,
+            "health_conditions": health_conditions or [],
+        }
+        return main._normalize_analysis_result(payload, user_context)
 
     def test_health_endpoint(self):
         response = self.client.get("/api/v1/health")
@@ -239,6 +307,9 @@ class LifeLensApiTestCase(unittest.TestCase):
         self.assertEqual(len(payload["items"]), 1)
         self.assertEqual(payload["items"][0]["friend_code"], alice["friend_code"])
         self.assertEqual(payload["items"][0]["main_name"], "牛油果鸡胸肉沙拉")
+        self.assertEqual(payload["items"][0]["nutrition_totals"]["protein_g"], 31.5)
+        self.assertEqual(payload["items"][0]["nutrition_tags"], ["高蛋白", "高纤维"])
+        self.assertEqual(payload["items"][0]["warning_message"], "")
 
     def test_feed_only_returns_today_records_in_beijing(self):
         alice = self._init_user("46bc4d8c-c5e2-4758-b2ed-b8fa928687ec").json()["data"]
@@ -293,6 +364,195 @@ class LifeLensApiTestCase(unittest.TestCase):
             cursor.execute("SELECT COUNT(*) AS total FROM diet_records")
             self.assertEqual(cursor.fetchone()["total"], 1)
         self.assertEqual(payload["total_friends"], 0)
+
+    def test_normalize_analysis_result_prefers_item_totals_and_normalizes_numbers(self):
+        result = main._normalize_analysis_result(
+            {
+                "main_name": "酸奶燕麦杯",
+                "nutrition_totals": {
+                    "calories_kcal": "999",
+                    "protein_g": "99",
+                    "fat_g": "99",
+                    "carb_g": "99",
+                    "fiber_g": "99",
+                    "sugar_g": "99",
+                    "sodium_mg": "99",
+                },
+                "risk_flags": [{"code": "high_sugar", "severity": "low", "reason": "顶层提示"}],
+                "items": [
+                    {
+                        "name": "酸奶",
+                        "nutrition": {
+                            "calories_kcal": "200.4",
+                            "protein_g": "12.3",
+                            "fat_g": "6.2",
+                            "carb_g": "15.4",
+                            "fiber_g": "0.0",
+                            "sugar_g": "10.2",
+                            "sodium_mg": "120.3",
+                        },
+                    },
+                    {
+                        "name": "燕麦水果",
+                        "nutrition": {
+                            "calories_kcal": "219.6",
+                            "protein_g": "8.3",
+                            "fat_g": "3.4",
+                            "carb_g": "31.1",
+                            "fiber_g": "4.5",
+                            "sugar_g": "11.1",
+                            "sodium_mg": "79.6",
+                        },
+                    },
+                ],
+                "total_analysis": {
+                    "summary": "营养较均衡。",
+                    "suggestion": "注意控制加糖量。",
+                    "confidence": "0.88",
+                },
+            },
+            {"goal": "healthy_eat", "health_conditions": []},
+        )
+
+        self.assertEqual(result["total_calories"], 420)
+        self.assertEqual(result["nutrition_totals"]["protein_g"], 20.6)
+        self.assertEqual(result["nutrition_totals"]["sodium_mg"], 200)
+        self.assertEqual(result["total_analysis"]["confidence"], 0.88)
+        self.assertTrue(any(flag["code"] == "high_sugar" for flag in result["risk_flags"]))
+        self.assertIn("高糖", result["nutrition_tags"])
+
+    def test_personalized_risk_scoring_branches(self):
+        cases = [
+            {
+                "name": "糖尿病高糖",
+                "flags": [{"code": "high_sugar", "severity": "high", "reason": "含糖饮料较多"}],
+                "goal": "healthy_eat",
+                "conditions": ["Diabetes"],
+                "expected": "red",
+            },
+            {
+                "name": "高血压高钠",
+                "flags": [{"code": "high_sodium", "severity": "high", "reason": "酱汁偏咸"}],
+                "goal": "healthy_eat",
+                "conditions": ["Hypertension"],
+                "expected": "red",
+            },
+            {
+                "name": "高胆固醇饱和脂肪",
+                "flags": [{"code": "high_saturated_fat", "severity": "high", "reason": "油炸与肥肉较多"}],
+                "goal": "healthy_eat",
+                "conditions": ["High Cholesterol"],
+                "expected": "red",
+            },
+            {
+                "name": "坚果过敏",
+                "flags": [{"code": "allergen_risk", "severity": "high", "reason": "疑似含坚果碎"}],
+                "goal": "healthy_eat",
+                "conditions": ["Nut Allergy"],
+                "expected": "red",
+            },
+            {
+                "name": "无麸质",
+                "flags": [{"code": "gluten_risk", "severity": "high", "reason": "疑似含小麦面包"}],
+                "goal": "healthy_eat",
+                "conditions": ["Gluten Free"],
+                "expected": "red",
+            },
+            {
+                "name": "乳糖不耐受",
+                "flags": [{"code": "lactose_risk", "severity": "high", "reason": "含奶油与奶酪"}],
+                "goal": "healthy_eat",
+                "conditions": ["Lactose Intolerant"],
+                "expected": "red",
+            },
+            {
+                "name": "增肌低蛋白",
+                "flags": [{"code": "low_protein", "severity": "medium", "reason": "以主食为主"}],
+                "goal": "muscle_gain",
+                "conditions": [],
+                "expected": "yellow",
+            },
+            {
+                "name": "减脂高热量高脂肪",
+                "flags": [
+                    {"code": "high_calorie", "severity": "high", "reason": "总热量偏高"},
+                    {"code": "high_fat", "severity": "medium", "reason": "脂肪含量偏高"},
+                ],
+                "goal": "weight_loss",
+                "conditions": [],
+                "expected": "red",
+            },
+        ]
+
+        for case in cases:
+            with self.subTest(case["name"]):
+                result = self._analysis_result_with_flags(
+                    case["flags"],
+                    goal=case["goal"],
+                    health_conditions=case["conditions"],
+                )
+                self.assertEqual(result["total_traffic_light"], case["expected"])
+                self.assertTrue(result["warning_message"])
+
+    def test_init_db_migrates_legacy_diet_records_schema(self):
+        with db.get_db() as conn:
+            cursor = conn.cursor()
+            cursor.executescript(
+                """
+                DROP TABLE IF EXISTS diet_records;
+                DELETE FROM users;
+                INSERT INTO users (user_id, friend_code, created_at)
+                VALUES ('46bc4d8c-c5e2-4758-b2ed-b8fa928687ec', '123456', '2026-03-12T00:00:00Z');
+                CREATE TABLE diet_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    main_name TEXT NOT NULL,
+                    total_calories INTEGER NOT NULL,
+                    total_traffic_light TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    image_url TEXT,
+                    image_expires_at TEXT,
+                    recorded_at TEXT NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+                );
+                INSERT INTO diet_records (
+                    user_id,
+                    main_name,
+                    total_calories,
+                    total_traffic_light,
+                    summary,
+                    image_url,
+                    image_expires_at,
+                    recorded_at
+                )
+                VALUES (
+                    '46bc4d8c-c5e2-4758-b2ed-b8fa928687ec',
+                    '旧版记录',
+                    300,
+                    'yellow',
+                    '旧版摘要',
+                    '/uploads/legacy.jpg',
+                    '',
+                    '2026-03-12T00:00:00Z'
+                );
+                """
+            )
+            conn.commit()
+
+        db.init_db()
+
+        with db.get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(diet_records)")
+            columns = {row["name"] for row in cursor.fetchall()}
+            self.assertIn("warning_message", columns)
+            self.assertIn("protein_g", columns)
+            self.assertIn("nutrition_tags_json", columns)
+            cursor.execute("SELECT main_name, warning_message, protein_g FROM diet_records")
+            row = cursor.fetchone()
+            self.assertEqual(row["main_name"], "旧版记录")
+            self.assertEqual(row["warning_message"], "")
+            self.assertEqual(row["protein_g"], 0)
 
     def test_rejects_invalid_file_type(self):
         response = self.client.post(

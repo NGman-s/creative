@@ -33,21 +33,48 @@
             </view>
           </view>
 
-          <view class="nutrition-row">
-            <view class="nutrition-item">
-              <text class="nutri-value" :class="{ 'text-danger': trafficLight === 'red' }">
-                {{ totalCalories }}
-              </text>
-              <text class="nutri-unit">kcal</text>
-              <text class="nutri-label">热量</text>
+          <view class="header-content">
+            <view class="header-summary">
+              <view class="nutrition-hero">
+                <view class="nutrition-item">
+                  <text class="nutri-value" :class="{ 'text-danger': trafficLight === 'red' }">
+                    {{ nutritionTotals.calories_kcal }}
+                  </text>
+                  <text class="nutri-unit">kcal</text>
+                  <text class="nutri-label">热量</text>
+                </view>
+              </view>
+
+              <view class="nutrition-tags">
+                <text v-for="tag in nutritionTags" :key="tag" class="tag-chip">{{ tag }}</text>
+                <text v-if="nutritionTags.length === 0" class="tag-chip muted">暂无标签</text>
+              </view>
             </view>
 
-            <view class="nutrition-divider"></view>
-
-            <view class="nutrition-tags">
-              <text v-for="tag in primaryTags" :key="tag" class="tag-chip">{{ tag }}</text>
-              <text v-if="primaryTags.length === 0" class="tag-chip muted">暂无标签</text>
+            <view class="metrics-board">
+              <view class="nutrition-compact-list">
+                <view
+                  v-for="metric in nutritionMetrics"
+                  :key="metric.key"
+                  class="compact-metric"
+                >
+                  <view class="compact-metric-badge" :class="metric.accent">{{ metric.label }}</view>
+                  <view class="compact-metric-value-row">
+                    <text class="compact-metric-value">{{ metric.displayValue }}</text>
+                    <text class="compact-metric-unit">{{ metric.unit }}</text>
+                  </view>
+                </view>
+              </view>
             </view>
+          </view>
+
+          <view v-if="riskFlags.length" class="risk-chip-row">
+            <text
+              v-for="flag in riskFlags"
+              :key="`${flag.code}-${flag.severity}`"
+              class="risk-chip"
+              :class="flag.severity"
+            >{{ getRiskLabel(flag.code) }}</text>
           </view>
         </view>
 
@@ -142,6 +169,13 @@
 
 <script setup>
 import { computed, defineEmits, defineProps, ref, watch } from 'vue';
+import {
+  NUTRITION_OVERVIEW_METRICS,
+  formatNutritionValue,
+  getNutritionTagsFromResult,
+  getNutritionTotalsFromResult,
+  getRiskFlagsFromResult
+} from '@/utils/nutrition';
 
 const props = defineProps({
   visible: Boolean,
@@ -167,8 +201,15 @@ const innerScrollTop = ref(0);
 const result = computed(() => props.entry?.result || {});
 const primaryItem = computed(() => result.value.items?.[0] || {});
 const displayName = computed(() => result.value.main_name || primaryItem.value.name || '未知菜品');
-const totalCalories = computed(() => result.value.total_calories || primaryItem.value.calories || 0);
-const primaryTags = computed(() => primaryItem.value.nutrition_tags || []);
+const nutritionTotals = computed(() => getNutritionTotalsFromResult(result.value));
+const nutritionTags = computed(() => getNutritionTagsFromResult(result.value));
+const riskFlags = computed(() => getRiskFlagsFromResult(result.value));
+const nutritionMetrics = computed(() =>
+  NUTRITION_OVERVIEW_METRICS.map((metric) => ({
+    ...metric,
+    displayValue: formatNutritionValue(metric.key, nutritionTotals.value[metric.key])
+  }))
+);
 const trafficLight = computed(() => {
   const color = (result.value.total_traffic_light || primaryItem.value.traffic_light || 'yellow').toLowerCase();
   return ['green', 'yellow', 'red'].includes(color) ? color : 'yellow';
@@ -229,6 +270,22 @@ const getTrafficLightLabel = (color) => {
     red: '少吃'
   };
   return map[color] || '未知';
+};
+
+const getRiskLabel = (code) => {
+  const map = {
+    high_calorie: '高热量',
+    high_sugar: '高糖',
+    high_sodium: '高钠',
+    high_fat: '高脂',
+    high_saturated_fat: '饱和脂肪高',
+    low_protein: '低蛋白',
+    low_fiber: '低纤维',
+    allergen_risk: '过敏原风险',
+    gluten_risk: '麸质风险',
+    lactose_risk: '乳糖风险'
+  };
+  return map[code] || '营养风险';
 };
 </script>
 
@@ -378,9 +435,22 @@ const getTrafficLightLabel = (color) => {
   background: #ff3b30;
 }
 
-.nutrition-row {
+.header-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 28px;
+  margin-top: 10px;
+}
+
+.header-summary {
+  flex: 0 0 320px;
+  min-width: 0;
+}
+
+.nutrition-hero {
   display: flex;
   align-items: center;
+  padding-top: 2px;
 }
 
 .nutrition-item {
@@ -409,17 +479,11 @@ const getTrafficLightLabel = (color) => {
   margin-right: 6px;
 }
 
-.nutrition-divider {
-  width: 1px;
-  height: 22px;
-  background: #e6e9ee;
-  margin: 0 16px;
-}
-
 .nutrition-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  margin-top: 18px;
 }
 
 .tag-chip {
@@ -433,6 +497,146 @@ const getTrafficLightLabel = (color) => {
 
 .tag-chip.muted {
   color: #8e96a3;
+}
+
+.metrics-board {
+  flex: 1;
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.nutrition-compact-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(118px, 1fr));
+  gap: 14px 22px;
+  width: 100%;
+  max-width: 760px;
+}
+
+.compact-metric {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.compact-metric-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 56px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #374151;
+  background: #eef2f7;
+}
+
+.compact-metric-badge.protein {
+  background: #e6f7ec;
+  color: #1f7a3d;
+}
+
+.compact-metric-badge.fat {
+  background: #fff0dc;
+  color: #b45309;
+}
+
+.compact-metric-badge.carb {
+  background: #efeaff;
+  color: #5b21b6;
+}
+
+.compact-metric-badge.fiber {
+  background: #e8f5ff;
+  color: #0369a1;
+}
+
+.compact-metric-badge.sugar {
+  background: #ffe7ee;
+  color: #be185d;
+}
+
+.compact-metric-badge.sodium {
+  background: #eef0f5;
+  color: #4b5563;
+}
+
+.compact-metric-value-row {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.compact-metric-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: #172033;
+}
+
+.compact-metric-unit {
+  font-size: 11px;
+  color: #7b8796;
+}
+
+.risk-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.risk-chip {
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #f1f3f6;
+  color: #516076;
+}
+
+.risk-chip.low {
+  background: #fff7e8;
+  color: #9a6700;
+}
+
+.risk-chip.medium {
+  background: #fff1db;
+  color: #c05c00;
+}
+
+.risk-chip.high {
+  background: #ffe6e6;
+  color: #c62828;
+}
+
+@media (max-width: 720px) {
+  .header-content {
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .header-summary {
+    flex-basis: auto;
+    width: 100%;
+  }
+
+  .metrics-board {
+    width: 100%;
+  }
+
+  .nutrition-compact-list {
+    grid-template-columns: repeat(2, 132px);
+    gap: 10px 16px;
+  }
+}
+
+@media (max-width: 420px) {
+  .nutrition-compact-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .section-container {

@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import Api from '@/utils/request';
+import { getNutritionTagsFromResult, getNutritionTotalsFromResult } from '@/utils/nutrition';
 
 const defaultProfile = {
   age: 25,
@@ -66,7 +67,7 @@ export const useUserStore = defineStore('user', {
         const day = String(d.getDate()).padStart(2, '0');
         const dateStr = `${year}-${month}-${day}`;
         const label = `${d.getMonth() + 1}/${d.getDate()}`;
-        days.push({ fullDate: dateStr, label, calories: 0 });
+        days.push({ fullDate: dateStr, label, calories: 0, protein: 0, fat: 0, carb: 0 });
       }
 
       const dayMap = new Map(days.map((day) => [day.fullDate, day]));
@@ -82,14 +83,11 @@ export const useUserStore = defineStore('user', {
           return;
         }
 
-        if (entry.result.total_calories) {
-          dayStat.calories += (parseInt(entry.result.total_calories, 10) || 0);
-          return;
-        }
-
-        (entry.result.items || []).forEach((item) => {
-          dayStat.calories += (parseInt(item.calories, 10) || 0);
-        });
+        const totals = getNutritionTotalsFromResult(entry.result);
+        dayStat.calories += parseInt(totals.calories_kcal, 10) || 0;
+        dayStat.protein += Number(totals.protein_g || 0);
+        dayStat.fat += Number(totals.fat_g || 0);
+        dayStat.carb += Number(totals.carb_g || 0);
       });
 
       return days;
@@ -136,11 +134,15 @@ export const useUserStore = defineStore('user', {
       uni.setStorageSync(STORAGE_KEYS.qrImageDataUrl, this.qrImageDataUrl);
     },
     _buildRecordPayload(result = {}) {
+      const nutritionTotals = getNutritionTotalsFromResult(result);
       return {
         main_name: String(result.main_name || result.items?.[0]?.name || '未知菜品'),
-        total_calories: parseInt(result.total_calories, 10) || 0,
+        total_calories: parseInt(nutritionTotals.calories_kcal, 10) || parseInt(result.total_calories, 10) || 0,
         total_traffic_light: String(result.total_traffic_light || result.items?.[0]?.traffic_light || 'yellow').toLowerCase(),
         summary: String(result.total_analysis?.summary || '暂无分析摘要'),
+        warning_message: String(result.warning_message || ''),
+        nutrition_totals: nutritionTotals,
+        nutrition_tags: getNutritionTagsFromResult(result),
         image_url: String(result.image_url || ''),
         image_expires_at: String(result.image_expires_at || '')
       };

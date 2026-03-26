@@ -78,9 +78,10 @@ async def analyze_food_image(image_path, user_context):
 
         prompt = f"""
         Role: Professional Nutritionist and AI Vision Expert.
-        Task: Analyze the provided food image and provide nutritional information based on the user's profile.
+        Task: Analyze the provided food image and return a structured nutrition estimate for the whole meal based on the user's profile.
 
         IMPORTANT: All text content in the output (values for name, summary, suggestion, thought_process, tags, etc.) MUST be in Simplified Chinese (简体中文). Keep the JSON keys in English.
+        IMPORTANT: Return STRICT JSON only. Do not wrap the JSON in markdown. Do not add any extra keys.
 
         User Profile:
         - Age: {user_context.get('age')}
@@ -93,42 +94,77 @@ async def analyze_food_image(image_path, user_context):
 
         Instructions:
         1. First, identify all food items in the image and estimate their portions accurately.
-        2. Reason about the nutritional content (macros/micros) based on ingredients.
-        3. MANDATORY SAFETY CHECK: Cross-reference the identified ingredients with the user's health conditions.
-           - Start your thought process by explicitly listing the health conditions considered: "考虑到用户的[健康状况1, 健康状况2]...".
-           - IF USER HAS ALLERGIES: You MUST flag ANY potential presence or risk of cross-contamination of the allergen.
-           - If user has "Diabetes": Be extremely sensitive to added sugars, white flour, and high-GI fruits.
-           - If user has "Hypertension": Be extremely sensitive to high sodium (salt), processed meats, and salty sauces.
-           - If user has "High Cholesterol": Flag high saturated fats and trans fats.
-        4. Traffic Light Logic (Rating Standards):
-           - RED: Mandatory for any direct ALLERGY exposure. Also for direct, high-risk conflicts with health conditions (e.g., sugary drink for Diabetic, high-sodium meal for Hypertension).
-           - YELLOW: Borderline/Caution. High in calories, fat, sugar, or sodium relative to goals, or requiring strict portion control.
-           - GREEN: Safe and recommended. No health conflicts; aligns with nutrition goals.
-        5. Global Calculation:
-           - Calculate 'total_calories' by summing up the calories of all identified items.
-           - Generate a 'main_name' that describes the entire meal (e.g., "Avocado Salmon Salad").
-           - Determine a 'total_traffic_light' based on the overall health impact.
-           - Provide a 'warning_message' ONLY IF 'total_traffic_light' is 'red' or 'yellow', explaining the specific health risk or allergy concern clearly in Chinese.
+        2. Estimate nutrition values using numbers only. Do not add units inside numeric fields.
+        3. MANDATORY SAFETY CHECK: Cross-reference identified ingredients with the user's health conditions.
+           - Start your thought_process by explicitly listing the health conditions considered.
+           - IF USER HAS ALLERGIES: flag any possible allergen or cross-contamination risk.
+           - If user has Diabetes: be highly sensitive to sugar, sweet drinks, refined carbs, and high-GI foods.
+           - If user has Hypertension: be highly sensitive to sodium, salty sauces, pickles, and processed meats.
+           - If user has High Cholesterol: be sensitive to fried foods, fatty cuts, and high saturated fat sources.
+           - If user has Gluten Free or Lactose Intolerant needs, flag suspicious ingredients.
+        4. Allowed risk flag codes ONLY:
+           - high_calorie
+           - high_sugar
+           - high_sodium
+           - high_fat
+           - high_saturated_fat
+           - low_protein
+           - low_fiber
+           - allergen_risk
+           - gluten_risk
+           - lactose_risk
+        5. Allowed severity values ONLY: low, medium, high.
+        6. For each item, include a short ingredient_evidence in Chinese describing the visual basis or likely ingredients.
+        7. 'nutrition_totals' should summarize the whole meal, but items must still contain their own nutrition for backend reconciliation.
+        8. If uncertain, provide the most likely estimate and explain the uncertainty briefly in thought_process.
 
         Output Format (STRICT JSON):
         {{
-            "main_name": "Overall Dish Name (Chinese)",
-            "total_calories": 0,
-            "total_traffic_light": "green/yellow/red",
-            "warning_message": "Clear warning in Chinese (if red/yellow, otherwise empty string)",
+            "main_name": "整餐名称",
+            "nutrition_totals": {{
+                "calories_kcal": 0,
+                "protein_g": 0,
+                "fat_g": 0,
+                "carb_g": 0,
+                "fiber_g": 0,
+                "sugar_g": 0,
+                "sodium_mg": 0
+            }},
+            "nutrition_tags": ["标签1", "标签2"],
+            "risk_flags": [
+                {{
+                    "code": "high_sugar",
+                    "severity": "medium",
+                    "reason": "含糖酱汁较多"
+                }}
+            ],
             "thought_process": "Detailed step-by-step reasoning in Chinese",
             "items": [
                 {{
-                    "name": "Dish Name (Chinese)",
-                    "calories": 0,
-                    "unit": "kcal",
+                    "name": "单个食物名称",
+                    "ingredient_evidence": "简短说明视觉证据或主要食材",
+                    "nutrition": {{
+                        "calories_kcal": 0,
+                        "protein_g": 0,
+                        "fat_g": 0,
+                        "carb_g": 0,
+                        "fiber_g": 0,
+                        "sugar_g": 0,
+                        "sodium_mg": 0
+                    }},
                     "nutrition_tags": ["Tag1", "Tag2"],
-                    "traffic_light": "green/yellow/red"
+                    "risk_flags": [
+                        {{
+                            "code": "low_protein",
+                            "severity": "low",
+                            "reason": "主食较多，优质蛋白较少"
+                        }}
+                    ]
                 }}
             ],
             "total_analysis": {{
-                "summary": "Short summary of the meal in Chinese",
-                "suggestion": "Practical advice for the user in Chinese",
+                "summary": "整餐简要总结",
+                "suggestion": "结合用户目标给出实用建议",
                 "confidence": 0.95
             }}
         }}
@@ -185,15 +221,18 @@ async def generate_alternative_suggestions(analysis_result, user_context):
         Context:
         - Food Name: {food_name}
         - Calories: {analysis_result.get('total_calories')} kcal
+        - Nutrition Totals: {json.dumps(analysis_result.get('nutrition_totals', {}), ensure_ascii=False)}
+        - Nutrition Tags: {', '.join(analysis_result.get('nutrition_tags', []))}
+        - Risk Flags: {json.dumps(analysis_result.get('risk_flags', []), ensure_ascii=False)}
         - Warning Message: {analysis_result.get('warning_message')}
         - Current Rating: {analysis_result.get('total_traffic_light')}
         - User Goal: {user_context.get('goal')}
         - User Health Conditions: {', '.join(user_context.get('health_conditions', []))}
 
         Instructions:
-        1. Provide an 'ordering_hint': A better choice if the user is ordering from a restaurant (e.g., "将日式拉面换成荞麦凉面"). For RED alerts, suggesting a completely different dish is often necessary.
-        2. Provide a 'cooking_hint': A way to modify the dish if the user is cooking at home (e.g., "将 50% 的面条替换为魔芋丝"). For RED alerts, highlight ways to drastically reduce the problematic component.
-        3. Keep suggestions concise, practical, and highly relevant to the warning message and user context.
+        1. Provide an 'ordering_hint': a healthier option for ordering, directly targeting the biggest risk flags first.
+        2. Provide a 'cooking_hint': a practical way to remake or adjust the dish at home, clearly reducing the problematic nutrient.
+        3. Keep suggestions concise, practical, and highly relevant to the warning message, risk flags, and user context.
         4. Both suggestions MUST be in Simplified Chinese (简体中文).
 
         Output Format (STRICT JSON):

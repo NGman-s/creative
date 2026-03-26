@@ -88,6 +88,7 @@ import TrendChart from '@/components/TrendChart.vue';
 import BottomNav from '@/components/BottomNav.vue';
 import HistoryDetailSheet from '@/components/HistoryDetailSheet.vue';
 import { useUserStore } from '@/store/user';
+import { getNutritionTotalsFromResult } from '@/utils/nutrition';
 import { resolveImageUrl } from '@/utils/request';
 
 const userStore = useUserStore();
@@ -139,6 +140,7 @@ const historyViewModels = computed(() =>
   history.value.map((entry) => {
     const result = getEntryResult(entry);
     const primaryItem = getPrimaryItem(entry);
+    const nutritionTotals = getNutritionTotalsFromResult(result);
     const imageAvailable = Boolean(entry?.image) && !unavailableImages.value[entry.id] && !isImageExpired(entry);
 
     return {
@@ -147,7 +149,7 @@ const historyViewModels = computed(() =>
       primaryItem,
       title: result.main_name || primaryItem.name || '未知菜品',
       summary: result.total_analysis?.summary || '暂无分析摘要',
-      calories: result.total_calories || primaryItem.calories || 0,
+      calories: nutritionTotals.calories_kcal || result.total_calories || primaryItem.calories || 0,
       trafficLight: normalizeTrafficLight(result.total_traffic_light || primaryItem.traffic_light),
       timeLabel: formatDate(entry.timestamp),
       imageAvailable,

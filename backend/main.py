@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps, UnidentifiedImageError
 import pillow_avif
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import uvicorn
 
 from services.vision_service import (
@@ -31,6 +31,16 @@ from utils.db import (
     save_diet_record,
 )
 from utils.cleanup import enforce_storage_limit, periodic_cleanup
+from utils.nutrition import (
+    build_backend_risk_flags,
+    has_nutrition_data,
+    infer_nutrition_tags,
+    merge_risk_flags,
+    normalize_nutrition_tags,
+    normalize_nutrition_totals,
+    normalize_risk_flags,
+    sort_risk_flags,
+)
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -171,12 +181,153 @@ def _safe_float(value, default=0.0):
         return default
 
 
+HEALTH_CONDITION_ALIASES = {
+    "diabetes": ("diabetes", "糖尿病"),
+    "hypertension": ("hypertension", "高血压"),
+    "high_cholesterol": ("high cholesterol", "高胆固醇", "胆固醇"),
+    "gluten_free": ("gluten free", "gluten-free", "无麸质"),
+    "lactose_intolerant": ("lactose intolerant", "乳糖不耐受", "乳糖"),
+}
+
+GOAL_ALIASES = {
+    "diabetes": ("diabetes", "糖尿病"),
+    "muscle_gain": ("muscle_gain", "增肌"),
+    "weight_loss": ("weight_loss", "减脂", "瘦身"),
+}
+
+RISK_REASON_COPY = {
+    "high_calorie": "总热量偏高",
+    "high_sugar": "糖含量偏高",
+    "high_sodium": "钠含量偏高",
+    "high_fat": "脂肪含量偏高",
+    "high_saturated_fat": "饱和脂肪偏高",
+    "low_protein": "蛋白质偏低",
+    "low_fiber": "膳食纤维偏低",
+    "allergen_risk": "存在过敏原风险",
+    "gluten_risk": "存在麸质风险",
+    "lactose_risk": "存在乳糖风险",
+}
+
+
 def _normalize_traffic_light(value, default="yellow"):
     if isinstance(value, str):
         normalized = value.strip().lower()
         if normalized in {"green", "yellow", "red"}:
             return normalized
     return default
+
+
+def _normalize_text_list(value):
+    if not isinstance(value, list):
+        return []
+    return [str(item or "").strip().lower() for item in value if str(item or "").strip()]
+
+
+def _matches_condition(conditions, condition_key):
+    keywords = HEALTH_CONDITION_ALIASES.get(condition_key, ())
+    return any(keyword in condition for condition in conditions for keyword in keywords)
+
+
+def _matches_goal(goal, goal_key):
+    normalized_goal = str(goal or "").strip().lower()
+    keywords = GOAL_ALIASES.get(goal_key, ())
+    return any(keyword in normalized_goal for keyword in keywords)
+
+
+def _default_risk_reason(code):
+    return RISK_REASON_COPY.get(code, "存在需要关注的营养风险")
+
+
+def _build_warning_message(traffic_light, reasons):
+    if traffic_light == "green":
+        return ""
+
+    unique_reasons = []
+    for reason in reasons:
+        normalized = str(reason or "").strip()
+        if not normalized or normalized in unique_reasons:
+            continue
+        unique_reasons.append(normalized)
+
+    if not unique_reasons:
+        return ""
+
+    prefix = "这餐需要注意：" if traffic_light == "yellow" else "这餐风险较高："
+    suffix = (
+        "。建议控制分量并优化搭配。"
+        if traffic_light == "yellow"
+        else "。建议优先更换食材或减少摄入。"
+    )
+    return prefix + "；".join(unique_reasons[:2]) + suffix
+
+
+def _evaluate_meal_risk(risk_flags, user_context):
+    normalized_flags = sort_risk_flags(normalize_risk_flags(risk_flags))
+    codes = {flag["code"] for flag in normalized_flags}
+    conditions = _normalize_text_list((user_context or {}).get("health_conditions"))
+    goal = (user_context or {}).get("goal")
+    traffic_rank = 0
+    reasons = []
+
+    def raise_to(color, reason):
+        nonlocal traffic_rank
+        rank = {"green": 0, "yellow": 1, "red": 2}[color]
+        traffic_rank = max(traffic_rank, rank)
+        normalized_reason = str(reason or "").strip()
+        if normalized_reason and normalized_reason not in reasons:
+            reasons.append(normalized_reason)
+
+    for flag in normalized_flags:
+        raise_to("yellow", flag.get("reason") or _default_risk_reason(flag["code"]))
+
+    has_any_allergy = any("allergy" in condition or "过敏" in condition for condition in conditions)
+    if "allergen_risk" in codes and has_any_allergy:
+        raise_to("red", "检测到潜在过敏原，与当前饮食禁忌直接冲突")
+    if "gluten_risk" in codes and _matches_condition(conditions, "gluten_free"):
+        raise_to("red", "这餐可能含麸质，不符合当前无麸质需求")
+    if "lactose_risk" in codes and _matches_condition(conditions, "lactose_intolerant"):
+        raise_to("red", "这餐可能含较多乳糖，不适合乳糖不耐受人群")
+
+    if "high_sugar" in codes:
+        if _matches_condition(conditions, "diabetes") or _matches_goal(goal, "diabetes"):
+            raise_to("red", "糖分偏高，对血糖管理不太友好")
+        else:
+            raise_to("yellow", "糖分偏高，建议减少额外糖来源")
+
+    if "high_sodium" in codes:
+        if _matches_condition(conditions, "hypertension"):
+            raise_to("red", "钠含量偏高，不利于高血压管理")
+        else:
+            raise_to("yellow", "钠含量偏高，建议减少高盐配料")
+
+    if "high_saturated_fat" in codes:
+        if _matches_condition(conditions, "high_cholesterol"):
+            raise_to("red", "饱和脂肪偏高，不利于胆固醇控制")
+        else:
+            raise_to("yellow", "饱和脂肪偏高，建议减少油炸和肥肉来源")
+
+    if "low_protein" in codes and _matches_goal(goal, "muscle_gain"):
+        raise_to("yellow", "蛋白质偏低，不利于增肌目标")
+
+    if "high_calorie" in codes and _matches_goal(goal, "weight_loss"):
+        if "high_fat" in codes or "low_protein" in codes:
+            raise_to("red", "总热量偏高且营养结构不理想，不利于减脂目标")
+        else:
+            raise_to("yellow", "总热量偏高，建议控制份量以贴合减脂目标")
+
+    traffic_light = {0: "green", 1: "yellow", 2: "red"}[traffic_rank]
+    return traffic_light, _build_warning_message(traffic_light, reasons)
+
+
+def _derive_item_traffic_light(item, risk_flags):
+    explicit = _normalize_traffic_light(item.get("traffic_light"), "")
+    if explicit:
+        return explicit
+    if any(flag.get("severity") == "high" for flag in risk_flags):
+        return "red"
+    if risk_flags:
+        return "yellow"
+    return "green"
 
 
 def _normalize_items(items):
@@ -187,45 +338,86 @@ def _normalize_items(items):
     for item in items:
         if not isinstance(item, dict):
             continue
-        tags = item.get("nutrition_tags")
-        if not isinstance(tags, list):
-            tags = []
+        nutrition = normalize_nutrition_totals(
+            item.get("nutrition"), fallback_calories=item.get("calories")
+        )
+        risk_flags = normalize_risk_flags(item.get("risk_flags"))
+        tags = normalize_nutrition_tags(item.get("nutrition_tags")) or infer_nutrition_tags(
+            nutrition, risk_flags
+        )
         normalized_items.append(
             {
                 "name": str(item.get("name") or "未知菜品"),
-                "calories": _safe_int(item.get("calories"), 0),
+                "calories": nutrition["calories_kcal"],
                 "unit": str(item.get("unit") or "kcal"),
-                "nutrition_tags": [str(tag) for tag in tags if tag is not None],
-                "traffic_light": _normalize_traffic_light(
-                    item.get("traffic_light"), "yellow"
+                "nutrition": nutrition,
+                "nutrition_tags": tags,
+                "risk_flags": risk_flags,
+                "ingredient_evidence": str(
+                    item.get("ingredient_evidence") or item.get("evidence") or ""
                 ),
+                "traffic_light": _derive_item_traffic_light(item, risk_flags),
             }
         )
     return normalized_items
 
 
-def _normalize_analysis_result(result):
+def _normalize_analysis_result(result, user_context=None):
     if not isinstance(result, dict):
         raise ValueError("Invalid analysis response format")
 
     items = _normalize_items(result.get("items"))
     fallback_name = items[0]["name"] if items else "未知菜品"
-    fallback_traffic = items[0]["traffic_light"] if items else "yellow"
-
     total_analysis = result.get("total_analysis")
     if not isinstance(total_analysis, dict):
         total_analysis = {}
 
     confidence = _safe_float(total_analysis.get("confidence"), 0.0)
     confidence = max(0.0, min(1.0, confidence))
+    model_totals = normalize_nutrition_totals(
+        result.get("nutrition_totals"), fallback_calories=result.get("total_calories")
+    )
+    item_totals = normalize_nutrition_totals()
+    if items:
+        summed = {}
+        for key, value in items[0]["nutrition"].items():
+            summed[key] = 0
+        for item in items:
+            for key, value in item["nutrition"].items():
+                summed[key] += _safe_float(value, 0.0)
+        item_totals = normalize_nutrition_totals(summed)
+
+    if items and has_nutrition_data(item_totals):
+        nutrition_totals = item_totals
+    elif has_nutrition_data(model_totals):
+        nutrition_totals = model_totals
+    else:
+        nutrition_totals = normalize_nutrition_totals(
+            None, fallback_calories=result.get("total_calories")
+        )
+
+    model_risk_flags = normalize_risk_flags(result.get("risk_flags"))
+    item_risk_flags = []
+    for item in items:
+        item_risk_flags.extend(item.get("risk_flags", []))
+    risk_flags = merge_risk_flags(
+        model_risk_flags,
+        item_risk_flags,
+        build_backend_risk_flags(nutrition_totals),
+    )
+    nutrition_tags = normalize_nutrition_tags(
+        result.get("nutrition_tags")
+    ) or infer_nutrition_tags(nutrition_totals, risk_flags)
+    total_traffic_light, warning_message = _evaluate_meal_risk(risk_flags, user_context)
 
     return {
         "main_name": str(result.get("main_name") or fallback_name),
-        "total_calories": _safe_int(result.get("total_calories"), 0),
-        "total_traffic_light": _normalize_traffic_light(
-            result.get("total_traffic_light"), fallback_traffic
-        ),
-        "warning_message": str(result.get("warning_message") or ""),
+        "total_calories": nutrition_totals["calories_kcal"],
+        "nutrition_totals": nutrition_totals,
+        "nutrition_tags": nutrition_tags,
+        "risk_flags": risk_flags,
+        "total_traffic_light": total_traffic_light,
+        "warning_message": warning_message,
         "thought_process": str(result.get("thought_process") or ""),
         "items": items,
         "total_analysis": {
@@ -320,6 +512,8 @@ def _parse_user_context(raw_user_context):
         parsed["health_conditions"] = []
     else:
         parsed["health_conditions"] = [str(item) for item in health_conditions]
+
+    parsed["goal"] = str(parsed.get("goal") or "").strip()
 
     return parsed
 
@@ -454,6 +648,9 @@ class DietRecordRequest(BaseModel):
     total_calories: int
     total_traffic_light: str
     summary: str
+    warning_message: str = ""
+    nutrition_totals: dict = Field(default_factory=dict)
+    nutrition_tags: list[str] = Field(default_factory=list)
     image_url: str = ""
     image_expires_at: str = ""
 
@@ -544,6 +741,9 @@ async def create_diet_record(
             total_calories=request.total_calories,
             total_traffic_light=request.total_traffic_light,
             summary=request.summary,
+            warning_message=request.warning_message,
+            nutrition_totals=request.nutrition_totals,
+            nutrition_tags=request.nutrition_tags,
             image_url=request.image_url,
             image_expires_at=request.image_expires_at,
         )
@@ -578,7 +778,9 @@ async def analyze_vision(file: UploadFile = File(...), user_context: str = Form(
             protected_paths=[str(thumbnail_path)],
         )
 
-        normalized_result = _normalize_analysis_result(analysis_result)
+        normalized_result = _normalize_analysis_result(
+            analysis_result, parsed_user_context
+        )
         normalized_result["image_url"] = f"/uploads/{thumbnail_path.name}"
         normalized_result["image_expires_at"] = _build_image_expiration()
         return JSONResponse(

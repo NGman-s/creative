@@ -158,6 +158,8 @@
 
               <text class="feed-title">{{ item.main_name }}</text>
               <text class="feed-summary">{{ item.summary }}</text>
+              <text class="feed-macro">{{ item.macroSummary }}</text>
+              <text v-if="item.warning_message" class="feed-warning">{{ item.warning_message }}</text>
 
               <view v-if="!item.imageAvailable" class="text-only-badge">
                 <text class="text-only-badge-text">仅文本动态</text>
@@ -186,6 +188,7 @@ import { storeToRefs } from 'pinia';
 import { onPullDownRefresh, onShow } from '@dcloudio/uni-app';
 import BottomNav from '@/components/BottomNav.vue';
 import { useUserStore } from '@/store/user';
+import { buildMacroSummary, normalizeNutritionTotals } from '@/utils/nutrition';
 import { formatRequestError, resolveImageUrl } from '@/utils/request';
 
 const userStore = useUserStore();
@@ -257,9 +260,11 @@ const feedViewModels = computed(() =>
 
     return {
       ...item,
+      nutritionTotals: normalizeNutritionTotals(item.nutrition_totals, item.total_calories || 0),
       total_traffic_light: normalizeTrafficLight(item.total_traffic_light),
       trafficLabel: getTrafficLabel(item.total_traffic_light),
       timeLabel: formatTime(item.recorded_at),
+      macroSummary: buildMacroSummary(item.nutrition_totals || {}),
       imageAvailable,
       imageSrc: imageAvailable ? resolveImageUrl(item.image_url) : ''
     };
@@ -903,6 +908,25 @@ onPullDownRefresh(async () => {
   font-size: 13px;
   line-height: 1.6;
   color: #475569;
+}
+
+.feed-macro {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #516076;
+}
+
+.feed-warning {
+  display: block;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: #fff4e5;
+  color: #b45309;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .text-only-badge {

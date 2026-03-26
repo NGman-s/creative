@@ -28,35 +28,65 @@
         <view class="result-header">
           <view class="title-row">
             <text class="dish-name">{{ result.main_name || result.items?.[0]?.name || '识别结果' }}</text>
-            <view class="traffic-badge" :class="(result.total_traffic_light || result.items?.[0]?.traffic_light || '').toLowerCase()">
-              {{ getTrafficLightLabel(result.total_traffic_light || result.items?.[0]?.traffic_light) }}
+            <view class="traffic-badge" :class="trafficLight">
+              {{ getTrafficLightLabel(trafficLight) }}
             </view>
           </view>
 
-          <view class="nutrition-row">
-            <view class="nutrition-item">
-              <view v-if="(result.total_traffic_light || '').toLowerCase() === 'red'" class="danger-dot"></view>
-              <text class="nutri-value" :class="{ 'text-danger': (result.total_traffic_light || '').toLowerCase() === 'red' }">
-                {{ result.total_calories || result.items?.[0]?.calories || 0 }}
-              </text>
-              <text class="nutri-unit">kcal</text>
-              <text class="nutri-label">热量</text>
-              <text v-if="(result.total_traffic_light || '').toLowerCase() === 'red'" class="warning-icon">⚠️</text>
+          <view class="header-content">
+            <view class="header-summary">
+              <view class="nutrition-hero">
+                <view class="nutrition-item">
+                  <view v-if="trafficLight === 'red'" class="danger-dot"></view>
+                  <text class="nutri-value" :class="{ 'text-danger': trafficLight === 'red' }">
+                    {{ nutritionTotals.calories_kcal }}
+                  </text>
+                  <text class="nutri-unit">kcal</text>
+                  <text class="nutri-label">热量</text>
+                  <text v-if="trafficLight === 'red'" class="warning-icon">⚠️</text>
+                </view>
+              </view>
+
+              <view class="nutrition-tags">
+                <text
+                  v-for="tag in nutritionTags"
+                  :key="tag"
+                  class="tag-chip"
+                >{{ tag }}</text>
+                <text v-if="nutritionTags.length === 0" class="tag-chip muted">暂无标签</text>
+              </view>
             </view>
-            <view class="nutrition-divider"></view>
-            <view class="nutrition-tags">
-              <text
-                v-for="tag in (result.items?.[0]?.nutrition_tags || [])"
-                :key="tag"
-                class="tag-chip"
-              >{{ tag }}</text>
+
+            <view class="metrics-board">
+              <view class="nutrition-compact-list">
+                <view
+                  v-for="metric in nutritionMetrics"
+                  :key="metric.key"
+                  class="compact-metric"
+                >
+                  <view class="compact-metric-badge" :class="metric.accent">{{ metric.label }}</view>
+                  <view class="compact-metric-value-row">
+                    <text class="compact-metric-value">{{ metric.displayValue }}</text>
+                    <text class="compact-metric-unit">{{ metric.unit }}</text>
+                  </view>
+                </view>
+              </view>
             </view>
+          </view>
+
+          <view v-if="riskFlags.length" class="risk-chip-row">
+            <text
+              v-for="flag in riskFlags"
+              :key="`${flag.code}-${flag.severity}`"
+              class="risk-chip"
+              :class="flag.severity"
+            >{{ getRiskLabel(flag.code) }}</text>
           </view>
         </view>
 
         <!-- Health Warning Section -->
         <view class="section-container" v-if="result.warning_message">
-          <view class="warning-alert-card" :class="(result.total_traffic_light || '').toLowerCase()">
+          <view class="warning-alert-card" :class="trafficLight">
             <text class="warning-icon-large">⚠️</text>
             <view class="warning-content">
               <view class="warning-title">健康预警</view>
@@ -102,7 +132,7 @@
         </view>
 
         <!-- AI Hack Section (New) -->
-        <view class="section-container" v-if="((result.total_traffic_light || '').toLowerCase() !== 'green') || result.alternatives">
+        <view class="section-container" v-if="trafficLight !== 'green' || result.alternatives">
           <view class="section-title">AI 爆改建议</view>
 
           <!-- Generate Button -->
@@ -141,8 +171,8 @@
         <!-- Action Buttons -->
         <view class="action-area button-group">
           <button class="btn-secondary" @click="$emit('discard')">不保存</button>
-          <button class="btn-primary" :class="{ 'btn-danger': (result.total_traffic_light || '').toLowerCase() === 'red' }" @click="handleSave">
-            {{ (result.total_traffic_light || '').toLowerCase() === 'red' ? '仍要保存' : '保存并关闭' }}
+          <button class="btn-primary" :class="{ 'btn-danger': trafficLight === 'red' }" @click="handleSave">
+            {{ trafficLight === 'red' ? '仍要保存' : '保存并关闭' }}
           </button>
         </view>
       </scroll-view>
@@ -151,8 +181,15 @@
 </template>
 
 <script setup>
-import { defineProps, defineEmits, ref, watch } from 'vue';
+import { computed, defineProps, defineEmits, ref, watch } from 'vue';
 import AIThoughtViewer from './AIThoughtViewer.vue';
+import {
+  NUTRITION_OVERVIEW_METRICS,
+  formatNutritionValue,
+  getNutritionTagsFromResult,
+  getNutritionTotalsFromResult,
+  getRiskFlagsFromResult
+} from '@/utils/nutrition';
 
 const props = defineProps({
   visible: Boolean,
@@ -165,6 +202,19 @@ const props = defineProps({
 
 const emit = defineEmits(['close', 'save', 'discard', 'generate-alternatives']);
 const isThoughtExpanded = ref(false);
+const trafficLight = computed(() => {
+  const color = String(props.result?.total_traffic_light || props.result?.items?.[0]?.traffic_light || 'yellow').toLowerCase();
+  return ['green', 'yellow', 'red'].includes(color) ? color : 'yellow';
+});
+const nutritionTotals = computed(() => getNutritionTotalsFromResult(props.result || {}));
+const nutritionTags = computed(() => getNutritionTagsFromResult(props.result || {}));
+const riskFlags = computed(() => getRiskFlagsFromResult(props.result || {}));
+const nutritionMetrics = computed(() =>
+  NUTRITION_OVERVIEW_METRICS.map((metric) => ({
+    ...metric,
+    displayValue: formatNutritionValue(metric.key, nutritionTotals.value[metric.key])
+  }))
+);
 
 const toggleThought = () => {
   if (!props.result?.thought_process) {
@@ -197,6 +247,22 @@ const getTrafficLightLabel = (color) => {
     'red': '少吃'
   };
   return map[c] || '未知';
+};
+
+const getRiskLabel = (code) => {
+  const map = {
+    high_calorie: '高热量',
+    high_sugar: '高糖',
+    high_sodium: '高钠',
+    high_fat: '高脂',
+    high_saturated_fat: '饱和脂肪高',
+    low_protein: '低蛋白',
+    low_fiber: '低纤维',
+    allergen_risk: '过敏原风险',
+    gluten_risk: '麸质风险',
+    lactose_risk: '乳糖风险'
+  };
+  return map[code] || '营养风险';
 };
 </script>
 
@@ -350,6 +416,24 @@ const getTrafficLightLabel = (color) => {
   &.red { background-color: #FF3B30; }
 }
 
+.header-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 28px;
+  margin-top: 10px;
+}
+
+.header-summary {
+  flex: 0 0 320px;
+  min-width: 0;
+}
+
+.nutrition-hero {
+  display: flex;
+  align-items: center;
+  padding-top: 2px;
+}
+
 .nutrition-row {
   display: flex;
   align-items: center;
@@ -413,6 +497,7 @@ const getTrafficLightLabel = (color) => {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  margin-top: 18px;
 }
 
 .tag-chip {
@@ -422,6 +507,150 @@ const getTrafficLightLabel = (color) => {
   font-size: 12px;
   border-radius: 6px;
   font-weight: 500;
+}
+
+.tag-chip.muted {
+  color: #8E8E93;
+}
+
+.metrics-board {
+  flex: 1;
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.nutrition-compact-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(118px, 1fr));
+  gap: 14px 22px;
+  width: 100%;
+  max-width: 760px;
+}
+
+.compact-metric {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.compact-metric-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 56px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #374151;
+  background: #eef2f7;
+}
+
+.compact-metric-badge.protein {
+  background: #e6f7ec;
+  color: #1f7a3d;
+}
+
+.compact-metric-badge.fat {
+  background: #fff0dc;
+  color: #b45309;
+}
+
+.compact-metric-badge.carb {
+  background: #efeaff;
+  color: #5b21b6;
+}
+
+.compact-metric-badge.fiber {
+  background: #e8f5ff;
+  color: #0369a1;
+}
+
+.compact-metric-badge.sugar {
+  background: #ffe7ee;
+  color: #be185d;
+}
+
+.compact-metric-badge.sodium {
+  background: #eef0f5;
+  color: #4b5563;
+}
+
+.compact-metric-value-row {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.compact-metric-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.compact-metric-unit {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.risk-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.risk-chip {
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
+.risk-chip.low {
+  background: #fff7e8;
+  color: #9a6700;
+}
+
+.risk-chip.medium {
+  background: #fff1db;
+  color: #c05c00;
+}
+
+.risk-chip.high {
+  background: #ffe6e6;
+  color: #c62828;
+}
+
+@media (max-width: 720px) {
+  .header-content {
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .header-summary {
+    flex-basis: auto;
+    width: 100%;
+  }
+
+  .metrics-board {
+    width: 100%;
+  }
+
+  .nutrition-compact-list {
+    grid-template-columns: repeat(2, 132px);
+    gap: 10px 16px;
+  }
+}
+
+@media (max-width: 420px) {
+  .nutrition-compact-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 /* Analysis Section */

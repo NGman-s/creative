@@ -1,5 +1,6 @@
 import base64
 import io
+import json
 import os
 import random
 import sqlite3
@@ -12,6 +13,13 @@ from zoneinfo import ZoneInfo
 import qrcode
 from zoneinfo import ZoneInfoNotFoundError
 
+from utils.nutrition import (
+    NUTRITION_FIELDS,
+    has_nutrition_data,
+    normalize_nutrition_tags,
+    normalize_nutrition_totals,
+)
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_DB_PATH = BASE_DIR / "data" / "lifelens.db"
 DB_PATH = Path(os.getenv("LIFELENS_DB_PATH", str(DEFAULT_DB_PATH)))
@@ -20,6 +28,17 @@ try:
 except ZoneInfoNotFoundError:
     # Windows Python environments may not ship IANA tzdata.
     SHANGHAI_TZ = timezone(timedelta(hours=8))
+
+DIET_RECORD_ADDITIONAL_COLUMNS = {
+    "warning_message": "TEXT NOT NULL DEFAULT ''",
+    "protein_g": "REAL NOT NULL DEFAULT 0",
+    "fat_g": "REAL NOT NULL DEFAULT 0",
+    "carb_g": "REAL NOT NULL DEFAULT 0",
+    "fiber_g": "REAL NOT NULL DEFAULT 0",
+    "sugar_g": "REAL NOT NULL DEFAULT 0",
+    "sodium_mg": "REAL NOT NULL DEFAULT 0",
+    "nutrition_tags_json": "TEXT NOT NULL DEFAULT '[]'",
+}
 
 
 def _resolve_db_path() -> Path:
@@ -83,6 +102,31 @@ def get_db() -> sqlite3.Connection:
     return conn
 
 
+def _ensure_diet_record_columns(cursor: sqlite3.Cursor) -> None:
+    cursor.execute("PRAGMA table_info(diet_records)")
+    existing_columns = {row["name"] for row in cursor.fetchall()}
+    for column_name, definition in DIET_RECORD_ADDITIONAL_COLUMNS.items():
+        if column_name in existing_columns:
+            continue
+        cursor.execute(
+            f"ALTER TABLE diet_records ADD COLUMN {column_name} {definition}"
+        )
+
+
+def _row_to_nutrition_totals(row: sqlite3.Row) -> dict:
+    return normalize_nutrition_totals(
+        {
+            "calories_kcal": row["total_calories"],
+            "protein_g": row["protein_g"],
+            "fat_g": row["fat_g"],
+            "carb_g": row["carb_g"],
+            "fiber_g": row["fiber_g"],
+            "sugar_g": row["sugar_g"],
+            "sodium_mg": row["sodium_mg"],
+        }
+    )
+
+
 def init_db() -> None:
     with get_db() as conn:
         cursor = conn.cursor()
@@ -116,6 +160,14 @@ def init_db() -> None:
                 total_calories INTEGER NOT NULL,
                 total_traffic_light TEXT NOT NULL,
                 summary TEXT NOT NULL,
+                warning_message TEXT NOT NULL DEFAULT '',
+                protein_g REAL NOT NULL DEFAULT 0,
+                fat_g REAL NOT NULL DEFAULT 0,
+                carb_g REAL NOT NULL DEFAULT 0,
+                fiber_g REAL NOT NULL DEFAULT 0,
+                sugar_g REAL NOT NULL DEFAULT 0,
+                sodium_mg REAL NOT NULL DEFAULT 0,
+                nutrition_tags_json TEXT NOT NULL DEFAULT '[]',
                 image_url TEXT,
                 image_expires_at TEXT,
                 recorded_at TEXT NOT NULL,
@@ -123,6 +175,7 @@ def init_db() -> None:
             )
             """
         )
+        _ensure_diet_record_columns(cursor)
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_friendships_user_id ON friendships(user_id)"
         )
@@ -266,6 +319,9 @@ def save_diet_record(
     total_calories: int,
     total_traffic_light: str,
     summary: str,
+    warning_message: str = "",
+    nutrition_totals: Optional[dict] = None,
+    nutrition_tags: Optional[list[str]] = None,
     image_url: str = "",
     image_expires_at: str = "",
     recorded_at: Optional[str] = None,
@@ -273,6 +329,7 @@ def save_diet_record(
     current_user_id = _validate_or_create_user_id(user_id)
     main_name = str(main_name or "").strip()
     summary = str(summary or "").strip()
+    warning_message = str(warning_message or "").strip()
     traffic_light = str(total_traffic_light or "").strip().lower()
 
     if not main_name:
@@ -282,13 +339,23 @@ def save_diet_record(
     if traffic_light not in {"green", "yellow", "red"}:
         raise ValueError("饮食状态无效")
 
+    calories_candidate = None
     try:
-        calories = int(total_calories)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("热量格式无效") from exc
+        calories_candidate = int(float(total_calories))
+    except (TypeError, ValueError):
+        calories_candidate = None
 
-    if calories < 0:
+    if calories_candidate is not None and calories_candidate < 0:
         raise ValueError("热量不能为负数")
+
+    normalized_totals = normalize_nutrition_totals(
+        nutrition_totals, fallback_calories=calories_candidate
+    )
+    if calories_candidate is None and not has_nutrition_data(normalized_totals):
+        raise ValueError("热量格式无效")
+
+    calories = int(normalized_totals["calories_kcal"])
+    normalized_tags = normalize_nutrition_tags(nutrition_tags)
 
     with get_db() as conn:
         cursor = conn.cursor()
@@ -302,11 +369,19 @@ def save_diet_record(
                 total_calories,
                 total_traffic_light,
                 summary,
+                warning_message,
+                protein_g,
+                fat_g,
+                carb_g,
+                fiber_g,
+                sugar_g,
+                sodium_mg,
+                nutrition_tags_json,
                 image_url,
                 image_expires_at,
                 recorded_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 current_user_id,
@@ -314,6 +389,14 @@ def save_diet_record(
                 calories,
                 traffic_light,
                 summary,
+                warning_message,
+                normalized_totals["protein_g"],
+                normalized_totals["fat_g"],
+                normalized_totals["carb_g"],
+                normalized_totals["fiber_g"],
+                normalized_totals["sugar_g"],
+                normalized_totals["sodium_mg"],
+                json.dumps(normalized_tags, ensure_ascii=False),
                 str(image_url or ""),
                 str(image_expires_at or ""),
                 normalized_recorded_at,
@@ -355,6 +438,14 @@ def get_today_friend_feed(user_id: str, reference_time: Optional[datetime] = Non
                 d.total_calories,
                 d.total_traffic_light,
                 d.summary,
+                d.warning_message,
+                d.protein_g,
+                d.fat_g,
+                d.carb_g,
+                d.fiber_g,
+                d.sugar_g,
+                d.sodium_mg,
+                d.nutrition_tags_json,
                 d.image_url,
                 d.image_expires_at,
                 d.recorded_at
@@ -378,6 +469,9 @@ def get_today_friend_feed(user_id: str, reference_time: Optional[datetime] = Non
                 "total_calories": row["total_calories"],
                 "total_traffic_light": row["total_traffic_light"],
                 "summary": row["summary"],
+                "warning_message": row["warning_message"] or "",
+                "nutrition_totals": _row_to_nutrition_totals(row),
+                "nutrition_tags": normalize_nutrition_tags(row["nutrition_tags_json"]),
                 "image_url": row["image_url"] or "",
                 "image_expires_at": row["image_expires_at"] or "",
                 "recorded_at": row["recorded_at"],
