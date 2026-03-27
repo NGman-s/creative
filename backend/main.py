@@ -208,8 +208,8 @@ RISK_REASON_COPY = {
     "gluten_risk": "存在麸质风险",
     "lactose_risk": "存在乳糖风险",
 }
-HISTORY_ADVICE_WINDOW_DAYS = 7
-DEFAULT_HISTORY_ADVICE_QUESTION = "请基于我最近7天的饮食记录给出建议"
+DEFAULT_HISTORY_ADVICE_WINDOW_DAYS = 0
+DEFAULT_HISTORY_ADVICE_QUESTION = "请结合我的饮食记录，给我一些有帮助的观察和建议"
 
 
 def _normalize_traffic_light(value, default="yellow"):
@@ -465,7 +465,9 @@ def _normalize_history_advice_result(result):
         raise ValueError("Invalid history advice response format")
 
     return {
-        "answer": str(result.get("answer") or "最近7天记录已收到，建议继续保持规律记录。").strip(),
+        "answer": str(
+            result.get("answer") or "已收到你的饮食记录，可以继续针对今天、最近或整体习惯提问。"
+        ).strip(),
         "observations": _normalize_display_list(result.get("observations"), 3),
         "suggestions": _normalize_display_list(result.get("suggestions"), 3),
         "focus_tags": _normalize_display_list(result.get("focus_tags"), 4),
@@ -677,7 +679,8 @@ class AlternativeRequest(BaseModel):
 
 class HistoryAdviceRequest(BaseModel):
     question: str = ""
-    window_days: int = HISTORY_ADVICE_WINDOW_DAYS
+    window_days: int = DEFAULT_HISTORY_ADVICE_WINDOW_DAYS
+    client_context: dict = Field(default_factory=dict)
     user_context: dict = Field(default_factory=dict)
     weekly_stats: list[dict] = Field(default_factory=list)
     recent_entries: list[dict] = Field(default_factory=list)
@@ -884,10 +887,8 @@ async def generate_alternatives(request: AlternativeRequest):
 async def history_advice(request: HistoryAdviceRequest):
     trace_id = str(uuid.uuid4())
     try:
-        if request.window_days != HISTORY_ADVICE_WINDOW_DAYS:
-            return _error_response("当前仅支持最近7天饮食建议", 400, trace_id)
         if not request.recent_entries:
-            return _error_response("最近7天暂无饮食记录，先记录几餐再来询问 AI 吧", 400, trace_id)
+            return _error_response("暂无可用饮食记录，先记录几餐再来询问 AI 吧", 400, trace_id)
 
         normalized_user_context = _normalize_user_context_dict(request.user_context)
         normalized_question = _normalize_history_advice_question(request.question)
@@ -896,6 +897,7 @@ async def history_advice(request: HistoryAdviceRequest):
             request.weekly_stats,
             request.recent_entries,
             normalized_user_context,
+            request.client_context,
         )
         normalized_result = _normalize_history_advice_result(result)
         return JSONResponse(status_code=200, content={"code": 200, "data": normalized_result})

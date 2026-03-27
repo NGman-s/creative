@@ -15,6 +15,47 @@ NUTRITION_FIELD_SPECS = {
 
 NUTRITION_FIELDS = tuple(NUTRITION_FIELD_SPECS.keys())
 
+NUTRITION_TAG_ALIASES = {
+    "high_protein": "高蛋白",
+    "protein_rich": "高蛋白",
+    "rich_in_protein": "高蛋白",
+    "high_fiber": "高纤维",
+    "fiber_rich": "高纤维",
+    "rich_in_fiber": "高纤维",
+    "low_fat": "低脂",
+    "low_calorie": "低热量",
+    "high_calorie": "高热量",
+    "high_sugar": "高糖",
+    "low_sugar": "低糖",
+    "high_sodium": "高钠",
+    "low_sodium": "低钠",
+    "low_protein": "低蛋白",
+    "low_fiber": "低纤维",
+    "high_carb": "高碳水",
+    "low_carb": "低碳水",
+    "balanced": "营养均衡",
+    "balanced_meal": "营养均衡",
+    "balanced_diet": "营养均衡",
+    "balanced_nutrition": "营养均衡",
+    "light_meal": "清淡",
+}
+
+NUTRITION_TAG_NUTRIENTS = {
+    "protein": "蛋白",
+    "fiber": "纤维",
+    "fat": "脂",
+    "saturated_fat": "饱和脂肪",
+    "sugar": "糖",
+    "sodium": "钠",
+    "calorie": "热量",
+    "calories": "热量",
+    "carb": "碳水",
+    "carbs": "碳水",
+    "carbohydrate": "碳水",
+    "carbohydrates": "碳水",
+    "cholesterol": "胆固醇",
+}
+
 RISK_CODE_ORDER = (
     "allergen_risk",
     "gluten_risk",
@@ -92,6 +133,43 @@ def sum_nutrition_totals(items: Iterable[dict]) -> dict:
     }
 
 
+def _normalize_tag_key(tag) -> str:
+    text = str(tag or "").strip().lower()
+    if not text:
+        return ""
+    text = text.replace("-", " ").replace("/", " ")
+    return "_".join(part for part in text.split() if part)
+
+
+def _translate_nutrition_tag(tag) -> str:
+    normalized_key = _normalize_tag_key(tag)
+    if not normalized_key:
+        return ""
+
+    if normalized_key in NUTRITION_TAG_ALIASES:
+        return NUTRITION_TAG_ALIASES[normalized_key]
+
+    for prefix, zh_prefix in (("high_", "高"), ("low_", "低")):
+        if not normalized_key.startswith(prefix):
+            continue
+        nutrient_key = normalized_key[len(prefix) :]
+        nutrient_label = NUTRITION_TAG_NUTRIENTS.get(nutrient_key)
+        if nutrient_label:
+            return f"{zh_prefix}{nutrient_label}"
+
+    if normalized_key.startswith("rich_in_"):
+        nutrient_label = NUTRITION_TAG_NUTRIENTS.get(normalized_key[len("rich_in_") :])
+        if nutrient_label:
+            return f"高{nutrient_label}"
+
+    if normalized_key.endswith("_rich"):
+        nutrient_label = NUTRITION_TAG_NUTRIENTS.get(normalized_key[: -len("_rich")])
+        if nutrient_label:
+            return f"高{nutrient_label}"
+
+    return str(tag or "").strip()
+
+
 def normalize_nutrition_tags(value) -> list[str]:
     raw_items = []
     if isinstance(value, list):
@@ -113,7 +191,7 @@ def normalize_nutrition_tags(value) -> list[str]:
     tags = []
     seen = set()
     for item in raw_items:
-        tag = str(item or "").strip()
+        tag = _translate_nutrition_tag(item)
         if not tag or tag in seen:
             continue
         seen.add(tag)
@@ -244,4 +322,3 @@ def infer_nutrition_tags(totals, risk_flags=None) -> list[str]:
         add("低纤维")
 
     return tags[:6]
-

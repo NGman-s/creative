@@ -189,7 +189,7 @@ const historyViewModels = computed(() =>
 
 const activeEntry = computed(() => historyViewModels.value.find((entry) => entry.id === activeEntryId.value) || null);
 const historyAdvicePayload = computed(() =>
-  userStore.buildHistoryAdvicePayload(historyAdviceQuestion.value, 7)
+  userStore.buildHistoryAdvicePayload(historyAdviceQuestion.value)
 );
 const hasHistoryAdviceSource = computed(() => historyAdvicePayload.value.recent_entries.length > 0);
 
@@ -208,7 +208,7 @@ const closeDetail = () => {
 const openHistoryAdvice = () => {
   if (!hasHistoryAdviceSource.value) {
     uni.showToast({
-      title: '最近7天暂无可用记录',
+      title: '暂无可用记录',
       icon: 'none'
     });
     return;
@@ -279,7 +279,7 @@ const handleLongPress = (entryId) => {
 const submitHistoryAdvice = async () => {
   const payload = historyAdvicePayload.value;
   if (!payload.recent_entries.length) {
-    historyAdviceError.value = '最近7天暂无饮食记录，先记录几餐再来询问 AI 吧。';
+    historyAdviceError.value = '暂无饮食记录，先记录几餐再来询问 AI 吧。';
     return;
   }
 
@@ -310,14 +310,14 @@ const submitHistoryAdvice = async () => {
     }
 
     throw {
-      message: res?.message || '周建议生成失败，请稍后重试',
+      message: res?.message || 'AI 回答生成失败，请稍后重试',
       traceId: res?.trace_id || ''
     };
   } catch (error) {
     if (requestId !== activeHistoryAdviceRequestId) {
       return;
     }
-    historyAdviceError.value = formatRequestError(error, '周建议生成失败，请稍后重试');
+    historyAdviceError.value = formatRequestError(error, 'AI 回答生成失败，请稍后重试');
   } finally {
     if (requestId === activeHistoryAdviceRequestId) {
       historyAdviceLoading.value = false;

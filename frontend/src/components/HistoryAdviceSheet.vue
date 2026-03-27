@@ -9,10 +9,10 @@
 
       <scroll-view v-if="visible" scroll-y class="sheet-content">
         <view class="hero-card">
-          <text class="hero-eyebrow">AI 周建议</text>
-          <text class="hero-title">结合最近 7 天饮食记录，给你更贴身的建议</text>
+          <text class="hero-eyebrow">AI 饮食问答</text>
+          <text class="hero-title">结合你的饮食记录，回答今天、最近或整体饮食问题</text>
           <text class="hero-copy">
-            AI 会参考本周趋势、最近几餐摘要和你的健康目标来回答。
+            AI 会参考近几次记录、近 7 天趋势和你的健康目标来回答。
           </text>
         </view>
 
@@ -27,13 +27,13 @@
             :value="question"
             maxlength="120"
             auto-height
-            placeholder="比如：我最近最大的饮食问题是什么？"
+            placeholder="比如：今天吃得怎么样？"
             placeholder-class="question-placeholder"
             @input="handleInput"
           />
 
           <view class="question-toolbar">
-            <text class="question-tip">支持直接问增肌、减脂、控糖或近期搭配问题</text>
+            <text class="question-tip">支持直接问今天吃得怎么样、最近问题或增肌减脂</text>
             <text class="question-count">{{ questionLength }}/120</text>
           </view>
 
@@ -47,7 +47,7 @@
           </button>
 
           <text v-if="!hasHistory" class="inline-empty-tip">
-            最近 7 天还没有可用记录，先保存几餐再来询问 AI。
+            还没有可用饮食记录，先保存几餐再来询问 AI。
           </text>
         </view>
 
@@ -60,8 +60,8 @@
 
         <view v-if="loading" class="section-container">
           <view class="loading-card">
-            <text class="loading-title">AI 正在整理你最近 7 天的饮食模式</text>
-            <text class="loading-text">这会结合趋势、最近餐食摘要和你的目标一起给建议。</text>
+            <text class="loading-title">AI 正在整理你的饮食记录</text>
+            <text class="loading-text">这会结合近 7 天趋势、最近餐食摘要和你的目标一起作答。</text>
           </view>
         </view>
 
@@ -81,7 +81,7 @@
 
           <view v-if="result.observations?.length" class="insight-card">
             <view class="insight-header">
-              <text class="insight-title">本周观察</text>
+              <text class="insight-title">记录观察</text>
             </view>
             <view
               v-for="(item, index) in result.observations"
@@ -110,9 +110,9 @@
 
         <view v-else class="section-container">
           <view class="placeholder-card">
-            <text class="placeholder-title">还没有生成周建议</text>
+            <text class="placeholder-title">还没有生成回答</text>
             <text class="placeholder-copy">
-              可以直接问“我最近饮食最大的短板是什么”或“增肌期要怎么调整这一周的搭配”。
+              可以直接问“今天吃得怎么样”“我最近饮食最大的短板是什么”或“接下来一餐怎么补蛋白”。
             </text>
           </view>
         </view>

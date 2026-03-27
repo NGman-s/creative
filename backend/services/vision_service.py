@@ -30,7 +30,7 @@ DEFAULT_TEXT_TIMEOUT_SEC = 60.0
 DEFAULT_MODEL_IMAGE_MAX_EDGE = 1024
 INFERENCE_IMAGE_QUALITY = 86
 MAX_ANALYSIS_ITEMS = 4
-MAX_RECENT_ENTRIES_FOR_PROMPT = 6
+MAX_RECENT_ENTRIES_FOR_PROMPT = 10
 MAX_WEEKLY_DAYS_FOR_PROMPT = 7
 LANCZOS_RESAMPLE = getattr(getattr(Image, "Resampling", Image), "LANCZOS")
 
@@ -345,7 +345,7 @@ def _compact_nutrition_for_prompt(nutrition_totals):
     return compact
 
 
-def _compact_history_advice_context(weekly_stats, recent_entries, user_context):
+def _compact_history_advice_context(weekly_stats, recent_entries, user_context, client_context=None):
     compact_user_context = {
         "goal": str((user_context or {}).get("goal") or "").strip(),
         "health_conditions": [
@@ -395,6 +395,10 @@ def _compact_history_advice_context(weekly_stats, recent_entries, user_context):
             "meal": str(entry.get("main_name") or "").strip(),
             "light": str(entry.get("total_traffic_light") or "").strip(),
         }
+        local_date = str(entry.get("local_date") or "").strip()
+        if local_date:
+            compact_entry["local_date"] = local_date
+
         warning_message = _truncate_text(entry.get("warning_message"), 48)
         if warning_message:
             compact_entry["warning"] = warning_message
@@ -417,12 +421,16 @@ def _compact_history_advice_context(weekly_stats, recent_entries, user_context):
 
         compact_recent_entries.append(compact_entry)
 
-    return {
+    compact_context = {
         "profile": compact_user_context,
         "weekly": compact_weekly_stats,
         "weekly_avg": averages,
         "recent_meals": compact_recent_entries,
     }
+    reference_today = str((client_context or {}).get("today") or "").strip()
+    if reference_today:
+        compact_context["reference_today"] = reference_today
+    return compact_context
 
 
 def _guess_mime_type(image_path):
@@ -647,15 +655,20 @@ def _build_alternatives_messages(analysis_result, user_context):
     ]
 
 
-def _build_history_advice_messages(question, weekly_stats, recent_entries, user_context):
+def _build_history_advice_messages(
+    question, weekly_stats, recent_entries, user_context, client_context=None
+):
     compact_context = _compact_history_advice_context(
-        weekly_stats, recent_entries, user_context
+        weekly_stats, recent_entries, user_context, client_context
     )
     return [
         {
             "role": "system",
             "content": (
-                "你是营养师和饮食教练。只根据最近7天的记录回答，"
+                "你是营养师和饮食教练。只根据提供的饮食记录和用户资料回答。"
+                "如果用户问今天、今天这顿或某一餐，优先参考 reference_today 与对应的 local_date/time；"
+                "如果用户问最近趋势，再结合 weekly 和 recent_meals。"
+                "如果记录不足以支持结论，要明确说明，不要硬猜。"
                 "不要提图片，不要编造不存在的数据，必须返回严格 JSON。"
             ),
         },
@@ -774,15 +787,17 @@ async def generate_alternative_suggestions(analysis_result, user_context):
         raise VisionServiceError("爆改建议服务暂时不可用，请稍后重试")
 
 
-async def generate_history_advice(question, weekly_stats, recent_entries, user_context):
+async def generate_history_advice(
+    question, weekly_stats, recent_entries, user_context, client_context=None
+):
     start_time = time.time()
     compact_context = _compact_history_advice_context(
-        weekly_stats, recent_entries, user_context
+        weekly_stats, recent_entries, user_context, client_context
     )
     try:
         _ensure_api_key_configured(TEXT_MODEL_NAME)
         messages = _build_history_advice_messages(
-            question, weekly_stats, recent_entries, user_context
+            question, weekly_stats, recent_entries, user_context, client_context
         )
         result, completion_meta = await _create_json_completion(
             model=TEXT_MODEL_NAME,

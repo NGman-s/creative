@@ -22,7 +22,7 @@ const STORAGE_KEYS = {
 };
 
 const ALLOWED_GENDERS = ['male', 'female'];
-const HISTORY_ADVICE_WINDOW_DAYS = 7;
+const MAX_HISTORY_ADVICE_ENTRIES = 20;
 
 const normalizeProfile = (profile = {}) => ({
   ...profile,
@@ -42,7 +42,17 @@ const getStorageValue = (key, fallback) => {
 };
 
 const clonePayload = (value) => JSON.parse(JSON.stringify(value));
-const startOfLocalDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+const formatLocalDateKey = (dateLike) => {
+  const date = new Date(dateLike);
+  if (!Number.isFinite(date.getTime())) {
+    return '';
+  }
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 export const useUserStore = defineStore('user', {
   state: () => ({
@@ -149,32 +159,23 @@ export const useUserStore = defineStore('user', {
         image_expires_at: String(result.image_expires_at || '')
       };
     },
-    buildHistoryAdvicePayload(question = '', windowDays = HISTORY_ADVICE_WINDOW_DAYS) {
-      const normalizedWindowDays = Number(windowDays) === HISTORY_ADVICE_WINDOW_DAYS
-        ? HISTORY_ADVICE_WINDOW_DAYS
-        : HISTORY_ADVICE_WINDOW_DAYS;
-      const now = new Date();
-      const windowStart = startOfLocalDay(new Date(
-        now.getFullYear(),
-        now.getMonth(),
-        now.getDate() - (normalizedWindowDays - 1)
-      ));
-
+    buildHistoryAdvicePayload(question = '') {
       const recentEntries = this.history
         .filter((entry) => {
           if (!entry?.result || !entry?.timestamp) {
             return false;
           }
           const timestamp = new Date(entry.timestamp);
-          return Number.isFinite(timestamp.getTime()) && timestamp >= windowStart;
+          return Number.isFinite(timestamp.getTime());
         })
         .sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime())
-        .slice(0, 10)
+        .slice(0, MAX_HISTORY_ADVICE_ENTRIES)
         .map((entry) => {
           const result = entry.result || {};
           const primaryItem = result.items?.[0] || {};
           return {
             timestamp: String(entry.timestamp || ''),
+            local_date: formatLocalDateKey(entry.timestamp),
             main_name: String(result.main_name || primaryItem.name || '未知菜品'),
             total_traffic_light: String(
               result.total_traffic_light || primaryItem.traffic_light || 'yellow'
@@ -188,7 +189,10 @@ export const useUserStore = defineStore('user', {
 
       return {
         question: String(question || '').trim(),
-        window_days: HISTORY_ADVICE_WINDOW_DAYS,
+        window_days: 0,
+        client_context: {
+          today: formatLocalDateKey(new Date())
+        },
         user_context: clonePayload(this.profile),
         weekly_stats: clonePayload(this.weeklyStats),
         recent_entries: recentEntries

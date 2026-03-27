@@ -34,6 +34,47 @@ export const TREND_METRICS = [
   { key: 'carb', totalsKey: 'carb_g', label: '碳水', unit: 'g', maxFloor: 320, accent: '#5856D6' }
 ];
 
+const NUTRITION_TAG_ALIASES = Object.freeze({
+  high_protein: '高蛋白',
+  protein_rich: '高蛋白',
+  rich_in_protein: '高蛋白',
+  high_fiber: '高纤维',
+  fiber_rich: '高纤维',
+  rich_in_fiber: '高纤维',
+  low_fat: '低脂',
+  low_calorie: '低热量',
+  high_calorie: '高热量',
+  high_sugar: '高糖',
+  low_sugar: '低糖',
+  high_sodium: '高钠',
+  low_sodium: '低钠',
+  low_protein: '低蛋白',
+  low_fiber: '低纤维',
+  high_carb: '高碳水',
+  low_carb: '低碳水',
+  balanced: '营养均衡',
+  balanced_meal: '营养均衡',
+  balanced_diet: '营养均衡',
+  balanced_nutrition: '营养均衡',
+  light_meal: '清淡'
+});
+
+const NUTRITION_TAG_NUTRIENTS = Object.freeze({
+  protein: '蛋白',
+  fiber: '纤维',
+  fat: '脂',
+  saturated_fat: '饱和脂肪',
+  sugar: '糖',
+  sodium: '钠',
+  calorie: '热量',
+  calories: '热量',
+  carb: '碳水',
+  carbs: '碳水',
+  carbohydrate: '碳水',
+  carbohydrates: '碳水',
+  cholesterol: '胆固醇'
+});
+
 const toNumber = (value) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -46,6 +87,71 @@ const normalizeValue = (key, value) => {
     return Math.round(normalized);
   }
   return Number(normalized.toFixed(precision));
+};
+
+const normalizeNutritionTagKey = (value = '') =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[-/]+/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .join('_');
+
+export const normalizeNutritionTag = (value) => {
+  const rawTag = String(value || '').trim();
+  const normalizedKey = normalizeNutritionTagKey(rawTag);
+
+  if (!normalizedKey) {
+    return '';
+  }
+
+  if (NUTRITION_TAG_ALIASES[normalizedKey]) {
+    return NUTRITION_TAG_ALIASES[normalizedKey];
+  }
+
+  for (const [prefix, labelPrefix] of [['high_', '高'], ['low_', '低']]) {
+    if (!normalizedKey.startsWith(prefix)) {
+      continue;
+    }
+
+    const nutrientLabel = NUTRITION_TAG_NUTRIENTS[normalizedKey.slice(prefix.length)];
+    if (nutrientLabel) {
+      return `${labelPrefix}${nutrientLabel}`;
+    }
+  }
+
+  if (normalizedKey.startsWith('rich_in_')) {
+    const nutrientLabel = NUTRITION_TAG_NUTRIENTS[normalizedKey.slice('rich_in_'.length)];
+    if (nutrientLabel) {
+      return `高${nutrientLabel}`;
+    }
+  }
+
+  if (normalizedKey.endsWith('_rich')) {
+    const nutrientLabel = NUTRITION_TAG_NUTRIENTS[normalizedKey.slice(0, -'_rich'.length)];
+    if (nutrientLabel) {
+      return `高${nutrientLabel}`;
+    }
+  }
+
+  return rawTag;
+};
+
+export const normalizeNutritionTags = (values = []) => {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  const tags = [];
+  values.forEach((value) => {
+    const normalized = normalizeNutritionTag(value);
+    if (!normalized || tags.includes(normalized)) {
+      return;
+    }
+    tags.push(normalized);
+  });
+  return tags;
 };
 
 export const normalizeNutritionTotals = (totals = {}, fallbackCalories = 0) => {
@@ -93,10 +199,10 @@ export const getNutritionTotalsFromResult = (result = {}) => {
 
 export const getNutritionTagsFromResult = (result = {}) => {
   if (Array.isArray(result?.nutrition_tags) && result.nutrition_tags.length) {
-    return result.nutrition_tags;
+    return normalizeNutritionTags(result.nutrition_tags);
   }
   if (Array.isArray(result?.items?.[0]?.nutrition_tags) && result.items[0].nutrition_tags.length) {
-    return result.items[0].nutrition_tags;
+    return normalizeNutritionTags(result.items[0].nutrition_tags);
   }
   return [];
 };
@@ -121,4 +227,3 @@ export const buildMacroSummary = (totals = {}) => {
     `碳水 ${formatNutritionValue('carb_g', normalized.carb_g)}g`
   ].join(' · ');
 };
-

@@ -154,7 +154,8 @@ class LifeLensApiTestCase(unittest.TestCase):
     def _history_advice_payload(self, question=""):
         return {
             "question": question,
-            "window_days": 7,
+            "window_days": 0,
+            "client_context": {"today": "2026-03-21"},
             "user_context": self._default_user_context(),
             "weekly_stats": [
                 {"fullDate": "2026-03-20", "label": "3/20", "calories": 520, "protein": 28.5, "fat": 18.0, "carb": 42.0},
@@ -163,6 +164,7 @@ class LifeLensApiTestCase(unittest.TestCase):
             "recent_entries": [
                 {
                     "timestamp": "2026-03-21T12:30:00Z",
+                    "local_date": "2026-03-21",
                     "main_name": "鸡胸肉沙拉",
                     "total_traffic_light": "yellow",
                     "warning_message": "这餐需要注意：蛋白质偏低。建议控制分量并优化搭配。",
@@ -455,6 +457,50 @@ class LifeLensApiTestCase(unittest.TestCase):
         self.assertTrue(any(flag["code"] == "high_sugar" for flag in result["risk_flags"]))
         self.assertIn("高糖", result["nutrition_tags"])
 
+    def test_normalize_analysis_result_translates_english_nutrition_tags(self):
+        result = main._normalize_analysis_result(
+            {
+                "main_name": "照烧虾仁蔬菜盖饭",
+                "nutrition_totals": {
+                    "calories_kcal": 580,
+                    "protein_g": 37,
+                    "fat_g": 11.5,
+                    "carb_g": 78,
+                    "fiber_g": 4.5,
+                    "sugar_g": 13.5,
+                    "sodium_mg": 952,
+                },
+                "nutrition_tags": ["high_protein", "balanced_meal", "高钠"],
+                "items": [
+                    {
+                        "name": "照烧虾仁蔬菜盖饭",
+                        "nutrition": {
+                            "calories_kcal": 580,
+                            "protein_g": 37,
+                            "fat_g": 11.5,
+                            "carb_g": 78,
+                            "fiber_g": 4.5,
+                            "sugar_g": 13.5,
+                            "sodium_mg": 952,
+                        },
+                        "nutrition_tags": ["High Protein", "balanced-meal", "low_fat"],
+                    }
+                ],
+                "total_analysis": {
+                    "summary": "测试摘要",
+                    "suggestion": "测试建议",
+                    "confidence": 0.9,
+                },
+            },
+            {"goal": "healthy_eat", "health_conditions": []},
+        )
+
+        self.assertEqual(result["nutrition_tags"], ["高蛋白", "营养均衡", "高钠"])
+        self.assertEqual(
+            result["items"][0]["nutrition_tags"],
+            ["高蛋白", "营养均衡", "低脂"],
+        )
+
     def test_personalized_risk_scoring_branches(self):
         cases = [
             {
@@ -595,7 +641,24 @@ class LifeLensApiTestCase(unittest.TestCase):
         response = self.client.post("/api/v1/vision/history-advice", json=payload)
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("暂无饮食记录", response.json()["message"])
+        self.assertIn("暂无可用饮食记录", response.json()["message"])
+
+    @patch.object(main, "generate_history_advice", new_callable=AsyncMock)
+    def test_history_advice_accepts_non_weekly_window(self, advice_mock):
+        advice_mock.return_value = {
+            "answer": "可以回答",
+            "observations": [],
+            "suggestions": [],
+            "focus_tags": [],
+        }
+
+        payload = self._history_advice_payload(question="今天吃得怎么样")
+        payload["window_days"] = 1
+
+        response = self.client.post("/api/v1/vision/history-advice", json=payload)
+
+        self.assertEqual(response.status_code, 200)
+        advice_mock.assert_awaited_once()
 
     @patch.object(main, "generate_history_advice", new_callable=AsyncMock)
     def test_history_advice_defaults_question_and_normalizes_response(self, advice_mock):
@@ -613,7 +676,7 @@ class LifeLensApiTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()["data"]
-        self.assertEqual(payload["answer"], "最近7天记录已收到，建议继续保持规律记录。")
+        self.assertEqual(payload["answer"], "已收到你的饮食记录，可以继续针对今天、最近或整体习惯提问。")
         self.assertEqual(payload["observations"], ["观察1", "观察2", "观察3"])
         self.assertEqual(payload["suggestions"], [])
         self.assertEqual(payload["focus_tags"], ["蛋白偏低", "高糖偏多", "晚餐过重", "零食偏多"])
@@ -622,6 +685,7 @@ class LifeLensApiTestCase(unittest.TestCase):
         args = advice_mock.await_args.args
         self.assertEqual(args[0], main.DEFAULT_HISTORY_ADVICE_QUESTION)
         self.assertEqual(args[1][0]["fullDate"], "2026-03-20")
+        self.assertEqual(args[4]["today"], "2026-03-21")
 
     def test_rejects_invalid_file_type(self):
         response = self.client.post(
@@ -873,7 +937,7 @@ class VisionServiceHelpersTestCase(unittest.TestCase):
                 "nutrition_tags": ["高蛋白", "", "低脂"] if index != 2 else [],
                 "summary": "" if index == 2 else f"摘要{index}",
             }
-            for index in range(8)
+            for index in range(12)
         ]
 
         compact = vision_service._compact_history_advice_context(
@@ -888,7 +952,7 @@ class VisionServiceHelpersTestCase(unittest.TestCase):
 
         self.assertEqual(len(compact["weekly"]), vision_service.MAX_WEEKLY_DAYS_FOR_PROMPT)
         self.assertEqual(len(compact["recent_meals"]), vision_service.MAX_RECENT_ENTRIES_FOR_PROMPT)
-        self.assertEqual(compact["recent_meals"][0]["meal"], "餐食7")
+        self.assertEqual(compact["recent_meals"][0]["meal"], "餐食11")
         self.assertNotIn("warning", compact["recent_meals"][-1])
         self.assertNotIn("summary", compact["recent_meals"][-1])
         self.assertNotIn("tags", compact["recent_meals"][-1])
