@@ -15,6 +15,12 @@ cp .env.example .env
 至少需要确认这些值：
 
 - `DASHSCOPE_API_KEY`: 必填
+- `DASHSCOPE_BASE_URL`: 默认 `https://dashscope.aliyuncs.com/compatible-mode/v1`
+- `VISION_MODEL`: 默认 `qwen3.5-flash`
+- `TEXT_MODEL`: 默认 `qwen3.5-flash`
+- `MODEL_TIMEOUT_IMAGE_SEC`: 默认 `90`
+- `MODEL_TIMEOUT_TEXT_SEC`: 默认 `60`
+- `MODEL_IMAGE_MAX_EDGE`: 默认 `1024`
 - `CORS_ALLOW_ORIGINS`: 生产环境请改成你的实际域名，不要继续使用 `*`
 - `MAX_UPLOAD_SIZE_MB`: 默认 `10`
 - `THUMBNAIL_RETENTION_DAYS`: 默认 `30`
@@ -43,6 +49,7 @@ docker compose up -d --build
 ## 5. 线上行为说明
 
 - H5 前端默认走同源 `/api` 与 `/uploads`，不需要手改前端请求地址。
+- 当前默认图片识别与文本建议都使用 `qwen3.5-flash`，并为 Qwen 显式关闭思考模式以提升结构化输出稳定性。
 - Nginx 已对 AI 接口启用基础限流：
   - `/api/v1/vision/analyze`: `10 req/min/IP`，`burst 5`
   - `/api/v1/vision/generate-alternatives`: `30 req/min/IP`，`burst 10`

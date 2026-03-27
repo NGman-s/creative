@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import os
@@ -7,14 +8,17 @@ import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
+import httpx
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main
+from services import vision_service
 from utils import cleanup, db
 
 
@@ -145,6 +149,36 @@ class LifeLensApiTestCase(unittest.TestCase):
             "nutrition_tags": ["高蛋白", "高纤维"],
             "image_url": "/uploads/demo.jpg",
             "image_expires_at": "2026-04-11T00:00:00Z",
+        }
+
+    def _history_advice_payload(self, question=""):
+        return {
+            "question": question,
+            "window_days": 7,
+            "user_context": self._default_user_context(),
+            "weekly_stats": [
+                {"fullDate": "2026-03-20", "label": "3/20", "calories": 520, "protein": 28.5, "fat": 18.0, "carb": 42.0},
+                {"fullDate": "2026-03-21", "label": "3/21", "calories": 610, "protein": 24.0, "fat": 22.0, "carb": 56.0},
+            ],
+            "recent_entries": [
+                {
+                    "timestamp": "2026-03-21T12:30:00Z",
+                    "main_name": "鸡胸肉沙拉",
+                    "total_traffic_light": "yellow",
+                    "warning_message": "这餐需要注意：蛋白质偏低。建议控制分量并优化搭配。",
+                    "nutrition_totals": {
+                        "calories_kcal": 420,
+                        "protein_g": 20.0,
+                        "fat_g": 16.0,
+                        "carb_g": 36.0,
+                        "fiber_g": 5.0,
+                        "sugar_g": 8.0,
+                        "sodium_mg": 480,
+                    },
+                    "nutrition_tags": ["高蛋白", "低脂"],
+                    "summary": "整体较轻盈，但蛋白质仍可提升。",
+                }
+            ],
         }
 
     def _analysis_result_with_flags(self, flags, *, goal="healthy_eat", health_conditions=None):
@@ -554,6 +588,41 @@ class LifeLensApiTestCase(unittest.TestCase):
             self.assertEqual(row["warning_message"], "")
             self.assertEqual(row["protein_g"], 0)
 
+    def test_history_advice_rejects_empty_recent_entries(self):
+        payload = self._history_advice_payload()
+        payload["recent_entries"] = []
+
+        response = self.client.post("/api/v1/vision/history-advice", json=payload)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("暂无饮食记录", response.json()["message"])
+
+    @patch.object(main, "generate_history_advice", new_callable=AsyncMock)
+    def test_history_advice_defaults_question_and_normalizes_response(self, advice_mock):
+        advice_mock.return_value = {
+            "answer": "",
+            "observations": ["观察1", "", "观察2", "观察3", "观察4"],
+            "suggestions": "bad-shape",
+            "focus_tags": ["蛋白偏低", "高糖偏多", "高糖偏多", "晚餐过重", "零食偏多"],
+        }
+
+        response = self.client.post(
+            "/api/v1/vision/history-advice",
+            json=self._history_advice_payload(question=""),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()["data"]
+        self.assertEqual(payload["answer"], "最近7天记录已收到，建议继续保持规律记录。")
+        self.assertEqual(payload["observations"], ["观察1", "观察2", "观察3"])
+        self.assertEqual(payload["suggestions"], [])
+        self.assertEqual(payload["focus_tags"], ["蛋白偏低", "高糖偏多", "晚餐过重", "零食偏多"])
+
+        advice_mock.assert_awaited_once()
+        args = advice_mock.await_args.args
+        self.assertEqual(args[0], main.DEFAULT_HISTORY_ADVICE_QUESTION)
+        self.assertEqual(args[1][0]["fullDate"], "2026-03-20")
+
     def test_rejects_invalid_file_type(self):
         response = self.client.post(
             "/api/v1/vision/analyze",
@@ -735,6 +804,151 @@ class LifeLensApiTestCase(unittest.TestCase):
 
         asyncio.run(cleanup.cleanup_old_files(str(main.UPLOADS_DIR), days=1))
         self.assertEqual(list(main.UPLOADS_DIR.iterdir()), [])
+
+
+class VisionServiceHelpersTestCase(unittest.TestCase):
+    def test_qwen_models_disable_thinking(self):
+        self.assertEqual(
+            vision_service._get_model_request_kwargs("qwen3.5-flash"),
+            {"extra_body": {"enable_thinking": False}},
+        )
+        self.assertEqual(
+            vision_service._get_model_request_kwargs("qwen-plus"),
+            {"extra_body": {"enable_thinking": False}},
+        )
+        self.assertEqual(
+            vision_service._get_model_request_kwargs("doubao-seed-2-0-lite-260215"),
+            {},
+        )
+
+    def test_prepare_inference_image_compresses_and_converts(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "large.png"
+            Image.new("RGBA", (2048, 1536), color=(30, 144, 255, 255)).save(source_path)
+
+            prepared_path, meta = vision_service._prepare_inference_image(str(source_path))
+            try:
+                self.assertTrue(Path(prepared_path).exists())
+                self.assertEqual(Path(prepared_path).suffix.lower(), ".jpg")
+                self.assertEqual(meta["original_mime"], "image/png")
+                self.assertEqual(meta["original_size"], [2048, 1536])
+                self.assertLessEqual(max(meta["prepared_size"]), vision_service.MODEL_IMAGE_MAX_EDGE)
+
+                with Image.open(prepared_path) as prepared_image:
+                    self.assertEqual(prepared_image.format, "JPEG")
+                    self.assertLessEqual(
+                        max(prepared_image.size), vision_service.MODEL_IMAGE_MAX_EDGE
+                    )
+            finally:
+                if os.path.exists(prepared_path):
+                    os.remove(prepared_path)
+
+    def test_compact_history_advice_context_trims_noise(self):
+        weekly_stats = [
+            {
+                "fullDate": f"2026-03-{day:02d}",
+                "label": f"3/{day}",
+                "calories": 500 + day,
+                "protein": 20 + day,
+                "fat": 10 + day,
+                "carb": 30 + day,
+            }
+            for day in range(20, 28)
+        ]
+        recent_entries = [
+            {
+                "timestamp": f"2026-03-{20 + index:02d}T12:00:00Z",
+                "main_name": f"餐食{index}",
+                "total_traffic_light": "yellow" if index % 2 else "green",
+                "warning_message": "" if index == 2 else f"提醒{index}",
+                "nutrition_totals": {
+                    "calories_kcal": 0 if index == 2 else 350 + index,
+                    "protein_g": 0 if index == 2 else 20 + index,
+                    "fat_g": 0 if index == 2 else 8 + index,
+                    "carb_g": 0 if index == 2 else 25 + index,
+                    "fiber_g": 0,
+                    "sugar_g": 0,
+                    "sodium_mg": 0,
+                },
+                "nutrition_tags": ["高蛋白", "", "低脂"] if index != 2 else [],
+                "summary": "" if index == 2 else f"摘要{index}",
+            }
+            for index in range(8)
+        ]
+
+        compact = vision_service._compact_history_advice_context(
+            weekly_stats,
+            recent_entries,
+            {
+                "goal": "muscle_gain",
+                "health_conditions": ["Diabetes"],
+                "age": 25,
+            },
+        )
+
+        self.assertEqual(len(compact["weekly"]), vision_service.MAX_WEEKLY_DAYS_FOR_PROMPT)
+        self.assertEqual(len(compact["recent_meals"]), vision_service.MAX_RECENT_ENTRIES_FOR_PROMPT)
+        self.assertEqual(compact["recent_meals"][0]["meal"], "餐食7")
+        self.assertNotIn("warning", compact["recent_meals"][-1])
+        self.assertNotIn("summary", compact["recent_meals"][-1])
+        self.assertNotIn("tags", compact["recent_meals"][-1])
+        self.assertNotIn("nutrition", compact["recent_meals"][-1])
+        self.assertEqual(compact["recent_meals"][0]["tags"], ["高蛋白", "低脂"])
+        self.assertEqual(compact["profile"]["goal"], "muscle_gain")
+        self.assertEqual(compact["weekly_avg"]["kcal"], 524)
+
+    def test_create_json_completion_falls_back_from_json_schema(self):
+        schema_error = httpx.Response(
+            400,
+            request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+        )
+        create_mock = AsyncMock(
+            side_effect=[
+                vision_service.BadRequestError(
+                    "The parameter `response_format.type` specified in the request are not valid: `json_schema` is not supported by this model.",
+                    response=schema_error,
+                    body={"error": {"param": "response_format.type"}},
+                ),
+                SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(
+                                content='{"answer":"ok","observations":[],"suggestions":[],"focus_tags":[]}'
+                            )
+                        )
+                    ]
+                ),
+            ]
+        )
+        fake_client = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create_mock))
+        )
+
+        with patch.object(vision_service, "_get_async_client", return_value=fake_client):
+            vision_service._RESPONSE_FORMAT_SUPPORT.clear()
+            result, meta = asyncio.run(
+                vision_service._create_json_completion(
+                    model="qwen3.5-flash",
+                    messages=[{"role": "user", "content": "hi"}],
+                    timeout=10,
+                    response_formats=[
+                        vision_service._build_json_schema_response_format(
+                            vision_service.HISTORY_ADVICE_JSON_SCHEMA
+                        ),
+                        {"type": "json_object"},
+                    ],
+                )
+            )
+
+        self.assertEqual(result["answer"], "ok")
+        self.assertEqual(meta["response_format_mode"], "json_object")
+        self.assertTrue(meta["response_format_fallback"])
+        self.assertEqual(
+            create_mock.await_args_list[0].kwargs["response_format"]["type"], "json_schema"
+        )
+        self.assertEqual(
+            create_mock.await_args_list[1].kwargs["response_format"]["type"], "json_object"
+        )
 
 
 if __name__ == "__main__":

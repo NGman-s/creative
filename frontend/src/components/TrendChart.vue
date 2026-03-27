@@ -1,9 +1,14 @@
 <template>
   <view class="chart-container">
     <view class="chart-header">
-      <view>
-        <text class="chart-title">本周{{ selectedMetric.label }}趋势</text>
-        <text class="chart-subtitle">平均: {{ averageLabel }}</text>
+      <view class="chart-header-top">
+        <view class="chart-copy">
+          <text class="chart-title">本周{{ selectedMetric.label }}趋势</text>
+          <text class="chart-subtitle">平均: {{ averageLabel }}</text>
+        </view>
+        <view v-if="hasHeaderAction" class="chart-header-action">
+          <slot name="header-action"></slot>
+        </view>
       </view>
       <view class="metric-tabs">
         <view
@@ -42,7 +47,7 @@
 </template>
 
 <script setup>
-import { computed, defineProps, ref } from 'vue';
+import { computed, defineProps, ref, useSlots } from 'vue';
 import { TREND_METRICS } from '@/utils/nutrition';
 
 const props = defineProps({
@@ -51,9 +56,11 @@ const props = defineProps({
     default: () => []
   }
 });
+const slots = useSlots();
 
 const metrics = TREND_METRICS;
 const selectedMetricKey = ref(metrics[0].key);
+const hasHeaderAction = computed(() => Boolean(slots['header-action']));
 
 const selectedMetric = computed(() =>
   metrics.find((metric) => metric.key === selectedMetricKey.value) || metrics[0]
@@ -111,6 +118,21 @@ const barStyle = (item) => ({
 
 .chart-header {
   margin-bottom: 24px;
+}
+
+.chart-header-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chart-copy {
+  min-width: 0;
+}
+
+.chart-header-action {
+  flex-shrink: 0;
 }
 
 .chart-title {
@@ -210,5 +232,16 @@ const barStyle = (item) => ({
   font-size: 11px;
   font-weight: 500;
   color: #86868b;
+}
+
+@media (max-width: 420px) {
+  .chart-header-top {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .chart-header-action {
+    align-self: flex-start;
+  }
 }
 </style>

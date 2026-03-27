@@ -13,8 +13,13 @@ LifeLens 是一个基于 Uni-app + FastAPI + 多模态模型的饮食识别与�
 
 根目录提供示例文件 [`.env.example`](/E:/a_work/Ruanchuangsai/work/.env.example)。常用配置如下：
 
-- `DASHSCOPE_API_KEY`: 必填，DashScope API Key
-- `DASHSCOPE_BASE_URL`: 可选，默认 DashScope OpenAI 兼容地址
+- `DASHSCOPE_API_KEY`: 必填，阿里云百炼 API Key
+- `DASHSCOPE_BASE_URL`: 可选，默认 `https://dashscope.aliyuncs.com/compatible-mode/v1`
+- `VISION_MODEL`: 可选，默认 `qwen3.5-flash`
+- `TEXT_MODEL`: 可选，默认 `qwen3.5-flash`
+- `MODEL_TIMEOUT_IMAGE_SEC`: 可选，图片识别超时秒数，默认 `90`
+- `MODEL_TIMEOUT_TEXT_SEC`: 可选，文本建议超时秒数，默认 `60`
+- `MODEL_IMAGE_MAX_EDGE`: 可选，推理前图片长边压缩上限，默认 `1024`
 - `CORS_ALLOW_ORIGINS`: 逗号分隔的允许来源
 - `MAX_UPLOAD_SIZE_MB`: 单张图片上传大小限制，默认 `10`
 - `THUMBNAIL_RETENTION_DAYS`: 历史缩略图保留天数，默认 `30`
@@ -63,6 +68,13 @@ VITE_API_BASE_URL=http://1.2.3.4:8080
 ```
 
 如果不设置该值，H5 可能仍然正常，但 APK 中的 `uni.uploadFile` / `uni.request` 会直接失败。
+
+说明：
+
+- 当前仓库默认图片识别与文本建议都使用 `qwen3.5-flash`。
+- 后端对 Qwen 调用会显式关闭思考模式，并优先走结构化输出。
+- 图片会在送入模型前做一次推理专用压缩，不影响历史缩略图展示。
+- 后端会优先使用 `DASHSCOPE_*` 配置；如果后续想切回豆包，仍兼容 `ARK_API_KEY` / `ARK_BASE_URL`。
 
 ## Docker 部署
 

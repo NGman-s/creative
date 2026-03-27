@@ -22,6 +22,7 @@ const STORAGE_KEYS = {
 };
 
 const ALLOWED_GENDERS = ['male', 'female'];
+const HISTORY_ADVICE_WINDOW_DAYS = 7;
 
 const normalizeProfile = (profile = {}) => ({
   ...profile,
@@ -41,6 +42,7 @@ const getStorageValue = (key, fallback) => {
 };
 
 const clonePayload = (value) => JSON.parse(JSON.stringify(value));
+const startOfLocalDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
 export const useUserStore = defineStore('user', {
   state: () => ({
@@ -145,6 +147,51 @@ export const useUserStore = defineStore('user', {
         nutrition_tags: getNutritionTagsFromResult(result),
         image_url: String(result.image_url || ''),
         image_expires_at: String(result.image_expires_at || '')
+      };
+    },
+    buildHistoryAdvicePayload(question = '', windowDays = HISTORY_ADVICE_WINDOW_DAYS) {
+      const normalizedWindowDays = Number(windowDays) === HISTORY_ADVICE_WINDOW_DAYS
+        ? HISTORY_ADVICE_WINDOW_DAYS
+        : HISTORY_ADVICE_WINDOW_DAYS;
+      const now = new Date();
+      const windowStart = startOfLocalDay(new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() - (normalizedWindowDays - 1)
+      ));
+
+      const recentEntries = this.history
+        .filter((entry) => {
+          if (!entry?.result || !entry?.timestamp) {
+            return false;
+          }
+          const timestamp = new Date(entry.timestamp);
+          return Number.isFinite(timestamp.getTime()) && timestamp >= windowStart;
+        })
+        .sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime())
+        .slice(0, 10)
+        .map((entry) => {
+          const result = entry.result || {};
+          const primaryItem = result.items?.[0] || {};
+          return {
+            timestamp: String(entry.timestamp || ''),
+            main_name: String(result.main_name || primaryItem.name || '未知菜品'),
+            total_traffic_light: String(
+              result.total_traffic_light || primaryItem.traffic_light || 'yellow'
+            ).toLowerCase(),
+            warning_message: String(result.warning_message || ''),
+            nutrition_totals: getNutritionTotalsFromResult(result),
+            nutrition_tags: getNutritionTagsFromResult(result),
+            summary: String(result.total_analysis?.summary || '暂无分析摘要')
+          };
+        });
+
+      return {
+        question: String(question || '').trim(),
+        window_days: HISTORY_ADVICE_WINDOW_DAYS,
+        user_context: clonePayload(this.profile),
+        weekly_stats: clonePayload(this.weeklyStats),
+        recent_entries: recentEntries
       };
     },
     async initFriendIdentity(forceRefresh = false) {

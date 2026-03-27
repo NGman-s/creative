@@ -21,7 +21,7 @@
     *   打破传统 App 首页是菜单的定式，**启动即相机**。
     *   利用 AR 风格悬浮卡片（Glassmorphism），将营养数据直接叠加在实物画面上，实现“所见即所得”的沉浸式体验。
 2.  **技术应用创新 (RAG-lite & Multimodal AI)**：
-    *   引入 **Qwen-VL** 等先进视觉大模型，不仅能识别“是什么”（如牛肉面），更能理解“有多少”（份量预估）和“健康吗”（营养密度分析）。
+    *   引入 **Doubao Seed 2.0 Lite** 等先进多模态模型，不仅能识别“是什么”（如牛肉面），更能理解“有多少”（份量预估）和“健康吗”（营养密度分析）。
     *   通过精心设计的 Prompt Engineering，迫使大模型输出结构化 JSON 数据，实现非结构化图像到结构化营养档案的实时转换。
 ---
 
@@ -35,7 +35,7 @@
     *   支持编译为 Android APK 及微信小程序。
 *   **服务端 (Server)**：基于 **Python FastAPI** 构建的轻量级网关。
     *   部署于 Docker 容器中，负责请求转发、鉴权及与大模型 API 的交互。
-*   **AI 引擎 (AI Engine)**：接入阿里云 **DashScope (Qwen3-VL-Flash)**。
+*   **AI 引擎 (AI Engine)**：接入火山方舟 **Doubao Seed 2.0 Lite**。
     *   利用其强大的 OCR 和视觉推理能力，解析复杂菜品。
 
 ### 2.2 功能概述 (Function Overview)
@@ -62,9 +62,9 @@
 ### 3.1 可行性分析 (Feasibility Analysis)
 *   **技术可行性**：
     *   团队熟练掌握 Vue 3 和 Python 开发。
-    *   核心 MVP 已跑通：前端相机流流畅，后端 FastAPI 服务已 Docker 化并成功对接 Qwen3-VL-Flash和Qwen-Flash。
+    *   核心 MVP 已跑通：前端相机流流畅，后端 FastAPI 服务已 Docker 化并成功对接 Doubao Seed 2.0 Lite。
 *   **经济可行性**：
-    *   初期使用 Qwen3-VL-Flash 模型，API 成本极低（甚至免费额度足够支撑开发测试）。
+    *   初期统一使用 Doubao Seed 2.0 Lite 模型，便于多模态识别与文本建议链路共用一套配置。
     *   服务器采用按量付费模式，成本可控。
 
 ### 3.2 排期规划 (Schedule)

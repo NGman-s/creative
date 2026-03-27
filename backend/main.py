@@ -21,6 +21,7 @@ from services.vision_service import (
     VisionServiceError,
     analyze_food_image,
     generate_alternative_suggestions,
+    generate_history_advice,
 )
 from utils.db import (
     add_friend,
@@ -207,6 +208,8 @@ RISK_REASON_COPY = {
     "gluten_risk": "存在麸质风险",
     "lactose_risk": "存在乳糖风险",
 }
+HISTORY_ADVICE_WINDOW_DAYS = 7
+DEFAULT_HISTORY_ADVICE_QUESTION = "请基于我最近7天的饮食记录给出建议"
 
 
 def _normalize_traffic_light(value, default="yellow"):
@@ -221,6 +224,21 @@ def _normalize_text_list(value):
     if not isinstance(value, list):
         return []
     return [str(item or "").strip().lower() for item in value if str(item or "").strip()]
+
+
+def _normalize_display_list(value, limit):
+    if not isinstance(value, list):
+        return []
+
+    normalized = []
+    for item in value:
+        text = str(item or "").strip()
+        if not text or text in normalized:
+            continue
+        normalized.append(text)
+        if len(normalized) >= limit:
+            break
+    return normalized
 
 
 def _matches_condition(conditions, condition_key):
@@ -437,6 +455,23 @@ def _normalize_alternatives_result(result):
     }
 
 
+def _normalize_history_advice_question(question):
+    normalized = str(question or "").strip()
+    return normalized or DEFAULT_HISTORY_ADVICE_QUESTION
+
+
+def _normalize_history_advice_result(result):
+    if not isinstance(result, dict):
+        raise ValueError("Invalid history advice response format")
+
+    return {
+        "answer": str(result.get("answer") or "最近7天记录已收到，建议继续保持规律记录。").strip(),
+        "observations": _normalize_display_list(result.get("observations"), 3),
+        "suggestions": _normalize_display_list(result.get("suggestions"), 3),
+        "focus_tags": _normalize_display_list(result.get("focus_tags"), 4),
+    }
+
+
 def _error_response(message, status_code=500, trace_id=None):
     payload = {
         "code": status_code,
@@ -504,18 +539,24 @@ def _parse_user_context(raw_user_context):
     except json.JSONDecodeError as exc:
         raise UploadValidationError("用户档案格式无效", status_code=400) from exc
 
+    return _normalize_user_context_dict(parsed)
+
+
+def _normalize_user_context_dict(parsed):
     if not isinstance(parsed, dict):
         raise UploadValidationError("用户档案格式无效", status_code=400)
 
-    health_conditions = parsed.get("health_conditions")
+    normalized = dict(parsed)
+
+    health_conditions = normalized.get("health_conditions")
     if not isinstance(health_conditions, list):
-        parsed["health_conditions"] = []
+        normalized["health_conditions"] = []
     else:
-        parsed["health_conditions"] = [str(item) for item in health_conditions]
+        normalized["health_conditions"] = [str(item) for item in health_conditions]
 
-    parsed["goal"] = str(parsed.get("goal") or "").strip()
+    normalized["goal"] = str(normalized.get("goal") or "").strip()
 
-    return parsed
+    return normalized
 
 
 def _detect_image_format(file_path):
@@ -632,6 +673,14 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 class AlternativeRequest(BaseModel):
     analysis_result: dict
     user_context: dict
+
+
+class HistoryAdviceRequest(BaseModel):
+    question: str = ""
+    window_days: int = HISTORY_ADVICE_WINDOW_DAYS
+    user_context: dict = Field(default_factory=dict)
+    weekly_stats: list[dict] = Field(default_factory=list)
+    recent_entries: list[dict] = Field(default_factory=list)
 
 
 class UserInitRequest(BaseModel):
@@ -828,6 +877,37 @@ async def generate_alternatives(request: AlternativeRequest):
         return _error_response("爆改建议结果格式异常，请稍后重试", 502, trace_id)
     except Exception:
         logger.exception("Unexpected error during alternatives generation trace_id=%s", trace_id)
+        return _error_response("服务器内部错误，请稍后重试", 500, trace_id)
+
+
+@app.post("/api/v1/vision/history-advice")
+async def history_advice(request: HistoryAdviceRequest):
+    trace_id = str(uuid.uuid4())
+    try:
+        if request.window_days != HISTORY_ADVICE_WINDOW_DAYS:
+            return _error_response("当前仅支持最近7天饮食建议", 400, trace_id)
+        if not request.recent_entries:
+            return _error_response("最近7天暂无饮食记录，先记录几餐再来询问 AI 吧", 400, trace_id)
+
+        normalized_user_context = _normalize_user_context_dict(request.user_context)
+        normalized_question = _normalize_history_advice_question(request.question)
+        result = await generate_history_advice(
+            normalized_question,
+            request.weekly_stats,
+            request.recent_entries,
+            normalized_user_context,
+        )
+        normalized_result = _normalize_history_advice_result(result)
+        return JSONResponse(status_code=200, content={"code": 200, "data": normalized_result})
+    except UploadValidationError as exc:
+        return _error_response(exc.message, status_code=exc.status_code, trace_id=trace_id)
+    except VisionServiceError as exc:
+        return _error_response(str(exc), status_code=502, trace_id=trace_id)
+    except ValueError:
+        logger.exception("Invalid history advice response format trace_id=%s", trace_id)
+        return _error_response("历史建议结果格式异常，请稍后重试", 502, trace_id)
+    except Exception:
+        logger.exception("Unexpected error during history advice trace_id=%s", trace_id)
         return _error_response("服务器内部错误，请稍后重试", 500, trace_id)
 
 

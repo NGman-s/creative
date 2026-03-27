@@ -4,7 +4,7 @@
       class="page-scroll"
       scroll-y
       :scroll-top="historyScrollTop"
-      :scroll-y="!detailVisible"
+      :scroll-y="!detailVisible && !historyAdviceVisible"
       @scroll="handleHistoryScroll"
     >
       <view class="content-wrapper">
@@ -16,7 +16,18 @@
         </view>
 
         <view class="chart-card">
-          <TrendChart :data="weeklyStats" />
+          <TrendChart :data="weeklyStats">
+            <template #header-action>
+              <button
+                class="chart-ai-btn"
+                :class="{ disabled: !hasHistoryAdviceSource }"
+                :disabled="!hasHistoryAdviceSource"
+                @tap.stop="openHistoryAdvice"
+              >
+                询问AI
+              </button>
+            </template>
+          </TrendChart>
         </view>
 
         <view class="history-list">
@@ -77,6 +88,17 @@
       @image-error="handleActiveEntryImageError"
     />
 
+    <HistoryAdviceSheet
+      :visible="historyAdviceVisible"
+      v-model:question="historyAdviceQuestion"
+      :loading="historyAdviceLoading"
+      :result="historyAdviceResult"
+      :error-message="historyAdviceError"
+      :has-history="hasHistoryAdviceSource"
+      @submit="submitHistoryAdvice"
+      @close="closeHistoryAdvice"
+    />
+
     <BottomNav current="history" />
   </view>
 </template>
@@ -87,9 +109,10 @@ import { storeToRefs } from 'pinia';
 import TrendChart from '@/components/TrendChart.vue';
 import BottomNav from '@/components/BottomNav.vue';
 import HistoryDetailSheet from '@/components/HistoryDetailSheet.vue';
+import HistoryAdviceSheet from '@/components/HistoryAdviceSheet.vue';
 import { useUserStore } from '@/store/user';
 import { getNutritionTotalsFromResult } from '@/utils/nutrition';
-import { resolveImageUrl } from '@/utils/request';
+import Api, { formatRequestError, resolveImageUrl } from '@/utils/request';
 
 const userStore = useUserStore();
 const { history, weeklyStats } = storeToRefs(userStore);
@@ -99,6 +122,12 @@ const detailVisible = ref(false);
 const activeEntryId = ref('');
 const historyScrollTop = ref(0);
 const detailScrollTop = ref(0);
+const historyAdviceVisible = ref(false);
+const historyAdviceLoading = ref(false);
+const historyAdviceQuestion = ref('');
+const historyAdviceResult = ref(null);
+const historyAdviceError = ref('');
+let activeHistoryAdviceRequestId = 0;
 
 const formatDate = (isoString) => {
   const date = new Date(isoString);
@@ -159,6 +188,10 @@ const historyViewModels = computed(() =>
 );
 
 const activeEntry = computed(() => historyViewModels.value.find((entry) => entry.id === activeEntryId.value) || null);
+const historyAdvicePayload = computed(() =>
+  userStore.buildHistoryAdvicePayload(historyAdviceQuestion.value, 7)
+);
+const hasHistoryAdviceSource = computed(() => historyAdvicePayload.value.recent_entries.length > 0);
 
 const openDetail = (entryId) => {
   activeEntryId.value = entryId;
@@ -170,6 +203,26 @@ const closeDetail = () => {
   detailVisible.value = false;
   detailScrollTop.value = 0;
   activeEntryId.value = '';
+};
+
+const openHistoryAdvice = () => {
+  if (!hasHistoryAdviceSource.value) {
+    uni.showToast({
+      title: '最近7天暂无可用记录',
+      icon: 'none'
+    });
+    return;
+  }
+
+  historyAdviceError.value = '';
+  historyAdviceVisible.value = true;
+};
+
+const closeHistoryAdvice = () => {
+  activeHistoryAdviceRequestId += 1;
+  historyAdviceVisible.value = false;
+  historyAdviceLoading.value = false;
+  historyAdviceError.value = '';
 };
 
 const handleHistoryScroll = (event) => {
@@ -196,6 +249,8 @@ const handleClear = () => {
     success: (res) => {
       if (res.confirm) {
         closeDetail();
+        closeHistoryAdvice();
+        historyAdviceResult.value = null;
         userStore.clearHistory();
       }
     }
@@ -221,6 +276,55 @@ const handleLongPress = (entryId) => {
   });
 };
 
+const submitHistoryAdvice = async () => {
+  const payload = historyAdvicePayload.value;
+  if (!payload.recent_entries.length) {
+    historyAdviceError.value = '最近7天暂无饮食记录，先记录几餐再来询问 AI 吧。';
+    return;
+  }
+
+  const requestId = ++activeHistoryAdviceRequestId;
+  historyAdviceVisible.value = true;
+  historyAdviceLoading.value = true;
+  historyAdviceError.value = '';
+  historyAdviceResult.value = null;
+
+  try {
+    const res = await Api.request({
+      url: '/api/v1/vision/history-advice',
+      method: 'POST',
+      timeout: 120000,
+      header: {
+        'content-type': 'application/json'
+      },
+      data: payload
+    });
+
+    if (requestId !== activeHistoryAdviceRequestId) {
+      return;
+    }
+
+    if (res?.code === 200 && res.data) {
+      historyAdviceResult.value = res.data;
+      return;
+    }
+
+    throw {
+      message: res?.message || '周建议生成失败，请稍后重试',
+      traceId: res?.trace_id || ''
+    };
+  } catch (error) {
+    if (requestId !== activeHistoryAdviceRequestId) {
+      return;
+    }
+    historyAdviceError.value = formatRequestError(error, '周建议生成失败，请稍后重试');
+  } finally {
+    if (requestId === activeHistoryAdviceRequestId) {
+      historyAdviceLoading.value = false;
+    }
+  }
+};
+
 watch(
   history,
   (entries) => {
@@ -231,6 +335,11 @@ watch(
     const exists = entries.some((entry) => entry.id === activeEntryId.value);
     if (!exists) {
       closeDetail();
+    }
+
+    if (!entries.length || !hasHistoryAdviceSource.value) {
+      closeHistoryAdvice();
+      historyAdviceResult.value = null;
     }
   },
   { deep: true }
@@ -279,6 +388,31 @@ watch(
   padding: 16px;
   margin-bottom: 24px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03);
+  overflow: hidden;
+}
+
+.chart-ai-btn {
+  height: 36px;
+  line-height: 36px;
+  margin: 0;
+  padding: 0 14px;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #172033 0%, #35548a 100%);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 10px 20px rgba(23, 32, 51, 0.14);
+}
+
+.chart-ai-btn::after {
+  border: none;
+}
+
+.chart-ai-btn.disabled {
+  background: #eef2f7;
+  color: #9aa6b2;
+  box-shadow: none;
 }
 
 .history-card {
