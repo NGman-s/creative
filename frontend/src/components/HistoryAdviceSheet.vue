@@ -9,46 +9,83 @@
 
       <scroll-view v-if="visible" scroll-y class="sheet-content">
         <view class="hero-card">
-          <text class="hero-eyebrow">AI 饮食问答</text>
-          <text class="hero-title">结合你的饮食记录，回答今天、最近或整体饮食问题</text>
+          <view class="hero-badge-row">
+            <text class="hero-eyebrow">AI 饮食问答</text>
+            <text class="hero-caption">结合历史记录回答</text>
+          </view>
+          <text class="hero-title">今天、最近和下一餐，都可以直接问</text>
           <text class="hero-copy">
-            AI 会参考近几次记录、近 7 天趋势和你的健康目标来回答。
+            AI 会结合你的最近记录、近 7 天趋势和健康目标，给出更贴近实际的回答。
           </text>
+          <view class="hero-pills">
+            <view class="hero-pill">
+              <text class="hero-pill-label">今天</text>
+              <text class="hero-pill-copy">看当天搭配</text>
+            </view>
+            <view class="hero-pill">
+              <text class="hero-pill-label">最近</text>
+              <text class="hero-pill-copy">看连续变化</text>
+            </view>
+            <view class="hero-pill">
+              <text class="hero-pill-label">下一餐</text>
+              <text class="hero-pill-copy">给调整建议</text>
+            </view>
+          </view>
         </view>
 
         <view class="section-container">
-          <view class="section-header">
-            <text class="section-title">输入问题</text>
-            <text class="section-note">留空会使用默认问题</text>
+          <view class="composer-card">
+            <view class="section-header">
+              <text class="section-title">把问题抛给 AI</text>
+              <text class="section-note">留空会自动做一次总结</text>
+            </view>
+
+            <textarea
+              class="question-input"
+              :value="question"
+              maxlength="120"
+              auto-height
+              placeholder="例如：今天这几餐搭配合理吗？"
+              placeholder-class="question-placeholder"
+              @input="handleInput"
+            />
+
+            <view class="question-toolbar">
+              <text class="question-tip">问题越具体，回答通常越有针对性。</text>
+              <text class="question-count">{{ questionLength }}/120</text>
+            </view>
+
+            <view class="example-panel">
+              <view class="example-header">
+                <text class="example-title">试试这些问法</text>
+                <text class="example-note">点一下直接填入</text>
+              </view>
+              <view class="example-list">
+                <view
+                  v-for="item in exampleQuestions"
+                  :key="item"
+                  class="example-chip"
+                  :class="{ active: question === item }"
+                  @tap="applyExample(item)"
+                >
+                  <text class="example-chip-text">{{ item }}</text>
+                </view>
+              </view>
+            </view>
+
+            <button
+              class="btn-submit"
+              :loading="loading"
+              :disabled="loading || !hasHistory"
+              @click="emit('submit')"
+            >
+              {{ loading ? 'AI 分析中...' : result ? '重新询问 AI' : '开始询问 AI' }}
+            </button>
+
+            <text v-if="!hasHistory" class="inline-empty-tip">
+              还没有可用饮食记录，先保存几餐再来询问 AI。
+            </text>
           </view>
-
-          <textarea
-            class="question-input"
-            :value="question"
-            maxlength="120"
-            auto-height
-            placeholder="比如：今天吃得怎么样？"
-            placeholder-class="question-placeholder"
-            @input="handleInput"
-          />
-
-          <view class="question-toolbar">
-            <text class="question-tip">支持直接问今天吃得怎么样、最近问题或增肌减脂</text>
-            <text class="question-count">{{ questionLength }}/120</text>
-          </view>
-
-          <button
-            class="btn-submit"
-            :loading="loading"
-            :disabled="loading || !hasHistory"
-            @click="emit('submit')"
-          >
-            {{ loading ? 'AI 分析中...' : result ? '重新询问 AI' : '开始询问 AI' }}
-          </button>
-
-          <text v-if="!hasHistory" class="inline-empty-tip">
-            还没有可用饮食记录，先保存几餐再来询问 AI。
-          </text>
         </view>
 
         <view v-if="errorMessage" class="section-container">
@@ -61,7 +98,7 @@
         <view v-if="loading" class="section-container">
           <view class="loading-card">
             <text class="loading-title">AI 正在整理你的饮食记录</text>
-            <text class="loading-text">这会结合近 7 天趋势、最近餐食摘要和你的目标一起作答。</text>
+            <text class="loading-text">这会结合最近记录、近 7 天趋势和你的目标一起作答。</text>
           </view>
         </view>
 
@@ -110,9 +147,9 @@
 
         <view v-else class="section-container">
           <view class="placeholder-card">
-            <text class="placeholder-title">还没有生成回答</text>
+            <text class="placeholder-title">先选一个问题开始</text>
             <text class="placeholder-copy">
-              可以直接问“今天吃得怎么样”“我最近饮食最大的短板是什么”或“接下来一餐怎么补蛋白”。
+              例如“今天这几餐搭配合理吗？”“最近哪一餐最容易超标？”或“如果今晚点外卖，怎么选更稳妥？”
             </text>
           </view>
         </view>
@@ -148,9 +185,23 @@ const props = defineProps({
 
 const emit = defineEmits(['close', 'submit', 'update:question']);
 const questionLength = computed(() => String(props.question || '').length);
+const exampleQuestions = [
+  '今天这几餐搭配合理吗？',
+  '我最近最需要先改掉哪一个习惯？',
+  '如果想减脂，下一餐怎么吃更稳妥？',
+  '晚上容易饿，应该怎么调整？'
+];
 
 const handleInput = (event) => {
   emit('update:question', event?.detail?.value || '');
+};
+
+const applyExample = (question) => {
+  if (props.loading) {
+    return;
+  }
+
+  emit('update:question', question);
 };
 </script>
 
@@ -160,6 +211,14 @@ const handleInput = (event) => {
   inset: 0;
   z-index: 1000;
   pointer-events: none;
+  --text-primary: #172033;
+  --text-secondary: #7b8796;
+  --card-bg: #f4f7fb;
+  --card-border: #e4ebf3;
+  --soft-bg: #f9fafc;
+  --line: #dde3eb;
+  --accent: #2458ff;
+  --accent-soft: rgba(36, 88, 255, 0.08);
 }
 
 .overlay-container.visible {
@@ -179,40 +238,44 @@ const handleInput = (event) => {
   right: 0;
   bottom: 0;
   max-height: 86vh;
-  background:
-    radial-gradient(circle at top right, rgba(76, 141, 255, 0.14), transparent 28%),
-    linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-  border-radius: 28px 28px 0 0;
-  box-shadow: 0 -20px 48px rgba(15, 23, 42, 0.16);
-  transform: translateY(100%);
-  transition: transform 0.28s ease;
+  background: linear-gradient(180deg, #ffffff 0%, #f9fafc 100%);
+  border-radius: 24px 24px 0 0;
+  box-shadow: 0 -12px 40px rgba(15, 23, 42, 0.14);
+  transform: translate3d(0, 100%, 0);
+  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
   overflow: hidden;
+  padding-bottom: env(safe-area-inset-bottom);
+  will-change: transform;
 }
 
 .bottom-sheet.slide-up {
-  transform: translateY(0);
+  transform: translate3d(0, 0, 0);
 }
 
 .sheet-handle-bar {
+  width: 100%;
+  height: 24px;
   display: flex;
   justify-content: center;
-  padding: 10px 0 4px;
+  align-items: center;
+  flex-shrink: 0;
 }
 
 .sheet-handle {
-  width: 52px;
+  width: 40px;
   height: 5px;
   border-radius: 999px;
-  background: rgba(17, 24, 39, 0.12);
+  background: #d6dae1;
 }
 
 .sheet-content {
-  max-height: calc(86vh - 20px);
-  padding: 10px 18px calc(env(safe-area-inset-bottom) + 18px);
+  max-height: calc(86vh - 24px);
+  padding: 8px 24px 24px;
   box-sizing: border-box;
 }
 
 .hero-card,
+.composer-card,
 .answer-card,
 .insight-card,
 .placeholder-card,
@@ -223,27 +286,43 @@ const handleInput = (event) => {
 }
 
 .hero-card {
-  background: linear-gradient(135deg, #172033 0%, #23406d 100%);
-  color: #fff;
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.9), transparent 40%),
+    linear-gradient(135deg, #eef4fb 0%, #f7f9fc 100%);
+  border: 1px solid var(--card-border);
+}
+
+.hero-badge-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hero-caption {
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 .hero-eyebrow {
   display: inline-flex;
   align-items: center;
-  padding: 4px 10px;
+  padding: 5px 10px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.12);
+  background: #fff;
+  color: var(--accent);
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.4px;
+  border: 1px solid #dbe8ff;
 }
 
 .hero-title {
   display: block;
-  margin-top: 12px;
+  margin-top: 14px;
   font-size: 20px;
   line-height: 1.4;
   font-weight: 700;
+  color: var(--text-primary);
 }
 
 .hero-copy {
@@ -251,11 +330,53 @@ const handleInput = (event) => {
   margin-top: 8px;
   font-size: 13px;
   line-height: 1.7;
-  color: rgba(255, 255, 255, 0.82);
+  color: var(--text-secondary);
+}
+
+.hero-pills {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.hero-pill {
+  padding: 12px;
+  border-radius: 16px;
+  background: #ffffff;
+  border: 1px solid #e6edf5;
+}
+
+.hero-pill-label,
+.hero-pill-copy {
+  display: block;
+}
+
+.hero-pill-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.hero-pill-copy {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
 }
 
 .section-container {
-  margin-top: 16px;
+  margin-top: 18px;
+}
+
+.composer-card,
+.answer-card,
+.insight-card,
+.placeholder-card,
+.loading-card,
+.error-card {
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
 .section-header {
@@ -269,12 +390,12 @@ const handleInput = (event) => {
 .section-title {
   font-size: 16px;
   font-weight: 700;
-  color: #172033;
+  color: var(--text-primary);
 }
 
 .section-note {
   font-size: 12px;
-  color: #7b8796;
+  color: var(--text-secondary);
 }
 
 .question-input {
@@ -283,8 +404,9 @@ const handleInput = (event) => {
   padding: 16px;
   box-sizing: border-box;
   border-radius: 18px;
-  background: #f4f7fb;
-  color: #172033;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  color: var(--text-primary);
   font-size: 15px;
   line-height: 1.6;
 }
@@ -304,6 +426,7 @@ const handleInput = (event) => {
 .question-tip,
 .question-count,
 .inline-empty-tip,
+.example-note,
 .loading-text,
 .error-text,
 .placeholder-copy,
@@ -315,8 +438,62 @@ const handleInput = (event) => {
 .question-tip,
 .question-count,
 .inline-empty-tip,
+.example-note,
 .placeholder-copy {
-  color: #7b8796;
+  color: var(--text-secondary);
+}
+
+.example-panel {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 18px;
+  background: #f9fafc;
+  border: 1px solid #edf1f5;
+}
+
+.example-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.example-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.example-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.example-chip {
+  max-width: 100%;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: #ffffff;
+  border: 1px solid #e4ebf3;
+  transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+
+  &:active {
+    transform: scale(0.98);
+  }
+}
+
+.example-chip.active {
+  background: #eef4ff;
+  border-color: #cfe0ff;
+}
+
+.example-chip-text {
+  display: block;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
 }
 
 .btn-submit,
@@ -335,7 +512,7 @@ const handleInput = (event) => {
 }
 
 .btn-submit {
-  margin-top: 14px;
+  margin-top: 16px;
   background: linear-gradient(135deg, #2458ff 0%, #4f8dff 100%);
   color: #fff;
   box-shadow: 0 12px 24px rgba(36, 88, 255, 0.18);
@@ -353,16 +530,15 @@ const handleInput = (event) => {
 }
 
 .answer-card {
-  background:
-    radial-gradient(circle at top right, rgba(79, 141, 255, 0.12), transparent 32%),
-    #f6f9ff;
-  border: 1px solid rgba(79, 141, 255, 0.14);
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  box-shadow: none;
 }
 
 .answer-text {
   font-size: 15px;
   line-height: 1.8;
-  color: #172033;
+  color: var(--text-primary);
 }
 
 .focus-tags {
@@ -375,16 +551,17 @@ const handleInput = (event) => {
 .focus-tag {
   padding: 6px 12px;
   border-radius: 999px;
-  background: rgba(36, 88, 255, 0.08);
-  color: #2458ff;
+  background: var(--accent-soft);
+  color: var(--accent);
   font-size: 12px;
   font-weight: 600;
 }
 
 .insight-card {
   margin-top: 12px;
-  background: #fff;
+  background: #ffffff;
   border: 1px solid #e9eef5;
+  box-shadow: none;
 }
 
 .insight-card.action {
@@ -401,7 +578,7 @@ const handleInput = (event) => {
 .placeholder-title {
   font-size: 15px;
   font-weight: 700;
-  color: #172033;
+  color: var(--text-primary);
 }
 
 .insight-row {
@@ -434,6 +611,7 @@ const handleInput = (event) => {
 .placeholder-card,
 .loading-card {
   background: #f4f7fb;
+  border: none;
 }
 
 .loading-text,
@@ -448,6 +626,10 @@ const handleInput = (event) => {
   border: 1px solid rgba(255, 107, 107, 0.18);
 }
 
+.error-title {
+  color: var(--text-primary);
+}
+
 .action-area {
   padding: 18px 0 2px;
 }
@@ -455,5 +637,6 @@ const handleInput = (event) => {
 .btn-close {
   background: #172033;
   color: #fff;
+  border: none;
 }
 </style>

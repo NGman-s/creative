@@ -24,7 +24,7 @@
                 :disabled="!hasHistoryAdviceSource"
                 @tap.stop="openHistoryAdvice"
               >
-                询问AI
+                问问 AI
               </button>
             </template>
           </TrendChart>
@@ -395,13 +395,14 @@ watch(
   height: 36px;
   line-height: 36px;
   margin: 0;
-  padding: 0 14px;
+  padding: 0 16px;
   border: none;
   border-radius: 999px;
   background: linear-gradient(135deg, #172033 0%, #35548a 100%);
   color: #fff;
   font-size: 13px;
   font-weight: 600;
+  letter-spacing: 0.2px;
   box-shadow: 0 10px 20px rgba(23, 32, 51, 0.14);
 }
 
